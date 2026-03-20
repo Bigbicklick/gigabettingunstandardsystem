@@ -109,6 +109,19 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if highest_edge > 0.05:
             value_bet = True
 
+    recommended_stake = 0.0
+    if value_bet and best_bet:
+        # fractional Kelly formula (25% Kelly for risk management)
+        # f* = (p * b - q) / b
+        # where p = win probability, q = lose probability (1-p), b = decimal odds - 1
+        b = bookie_odds - 1.0
+        p = model_prob_for_bet
+        q = 1.0 - p
+        if b > 0:
+            kelly_fraction = (p * b - q) / b
+            if kelly_fraction > 0:
+                recommended_stake = round((kelly_fraction * 0.25) * 100, 2)
+
     confidence_score = float(max(p_home, p_draw, p_away) * 10) # 0 to 10
     
     return {
@@ -125,7 +138,8 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             "edge_percent": round(highest_edge * 100, 2),
             "model_probability": round(model_prob_for_bet * 100, 2),
             "bookmaker_odds": bookie_odds,
-            "confidence_score": round(confidence_score, 1)
+            "confidence_score": round(confidence_score, 1),
+            "recommended_stake_percentage": recommended_stake
         }
     }
 

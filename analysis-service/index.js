@@ -27,6 +27,7 @@ async function notifyDiscord(matchData) {
 📈 MODEL PROBABILITY: ${matchData.prediction.value_bet.model_probability}%
 ✅ VALUE BET: YES
 🧠 CONFIDENCE: ${matchData.prediction.value_bet.confidence_score}/10
+💸 SUGGESTED STAKE: ${matchData.prediction.value_bet.recommended_stake_percentage}% of bankroll (1/4 Kelly)
 `;
 
   try {
