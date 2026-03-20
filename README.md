@@ -6,7 +6,7 @@ A complete, production-ready AI-powered sports betting analysis system running c
 - Ubuntu VPS
 - Docker
 - Docker Compose
-- API-Football key (v3)
+- The Odds API key (free tier 500 req/month)
 - Discord Webhook URL
 
 ## Setup Instructions
@@ -23,7 +23,7 @@ A complete, production-ready AI-powered sports betting analysis system running c
    cp .env.example .env
    nano .env
    ```
-   Add your API-Football Key, Discord Webhook, and choose a DB password.
+   Add your The Odds API Key, Discord Webhook, and choose a DB password.
 
 3. **Deploy the System**:
    Start the entire stack using Docker Compose. The Postgres DB, Redis, AI model (FastAPI), Data Fetcher, and Analysis Cron will all start automatically.
@@ -34,7 +34,7 @@ A complete, production-ready AI-powered sports betting analysis system running c
 
 ## Architecture
 1. **AI Service** (`ai-service`): Python FastAPI app. Downloads 5 seasons of real Premier League matches via `football-data.co.uk`, engineers chronological form & streak features, trains an **XGBoost Classifier**, and serves predictions and value bet calculations.
-2. **Data Service** (`data-service`): Node.js cron. Queries the public `api-football` API every 2 hours to fetch upcoming matches for the top 5 leagues and saves them (along with Bet365 odds) to PostgreSQL.
+2. **Data Service** (`data-service`): Node.js cron. Queries the public `The Odds API` every 12 hours to fetch upcoming matches for the top 5 leagues (and MLS) and saves them (along with bet365 h2h odds) to PostgreSQL.
 3. **Analysis Service** (`analysis-service`): Node.js cron. Evaluates those matches every 10 minutes against the AI. If the AI detects a value bet edge > 5% and confidence > 7/10, a message is immediately fired to the Discord Webhook.
 
 ## Managing the Service

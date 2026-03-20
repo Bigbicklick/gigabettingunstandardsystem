@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 const axios = require('axios');
 const cron = require('node-cron');
 
-const API_KEY = process.env.API_FOOTBALL_KEY || 'demo_key';
+const API_KEY = process.env.THE_ODDS_API_KEY || 'demo_key';
 const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
 
 const pool = new Pool({
@@ -15,7 +15,7 @@ async function initDB() {
   try {
     await client.query(`
       CREATE TABLE IF NOT EXISTS matches (
-        fixture_id INT PRIMARY KEY,
+        fixture_id VARCHAR(100) PRIMARY KEY,
         league_name VARCHAR(100),
         home_team VARCHAR(100),
         away_team VARCHAR(100),
@@ -38,46 +38,52 @@ async function initDB() {
 }
 
 async function fetchUpcomingMatches() {
-  console.log('Fetching upcoming matches from API-Football...');
-  const dates = [0, 1, 2, 3].map(days => {
-    const d = new Date();
-    d.setDate(d.getDate() + days);
-    return d.toISOString().split('T')[0];
-  });
+  console.log('Fetching upcoming matches from The Odds API...');
   
   try {
-    // Top 5 leagues + MLS (League 253) to cover International Breaks
-    const leagues = [39, 140, 135, 78, 61, 253]; 
-    const season = new Date().getMonth() < 7 ? new Date().getFullYear() - 1 : new Date().getFullYear();
+    // The Odds API soccer keys
+    const sports = [
+      'soccer_epl',             // Premier League
+      'soccer_spain_la_liga',   // La Liga
+      'soccer_italy_serie_a',   // Serie A
+      'soccer_germany_bundesliga', // Bundesliga
+      'soccer_france_ligue_one',   // Ligue 1
+      'soccer_usa_mls'          // MLS
+    ]; 
     
-    for (const date of dates) {
-      for (const league of leagues) {
-        const response = await axios.get(`https://v3.football.api-sports.io/fixtures`, {
-          headers: { 'x-apisports-key': API_KEY },
-          params: { date, league, season }
+    for (const sport of sports) {
+      console.log(`Fetching odds for ${sport}...`);
+      try {
+        const response = await axios.get(`https://api.the-odds-api.com/v4/sports/${sport}/odds/`, {
+          params: {
+            apiKey: API_KEY,
+            regions: 'eu,uk', // bet365, pinnacle etc
+            markets: 'h2h',
+            oddsFormat: 'decimal'
+          }
         });
         
-        const fixtures = response.data.response || [];
-        console.log(`Found ${fixtures.length} fixtures for league ${league} on ${date}`);
+        const fixtures = response.data || [];
+        console.log(`Found ${fixtures.length} upcoming fixtures for ${sport}`);
         
         for (const f of fixtures) {
-          // Fetch odds for this fixture
+          // Find the best valid bookmaker odds (e.g. bet365, or the first one available)
+          let bookmaker = f.bookmakers.find(b => b.key === 'bet365') || f.bookmakers[0];
           let oddsHome = null, oddsDraw = null, oddsAway = null;
-          try {
-            const oddsRes = await axios.get(`https://v3.football.api-sports.io/odds`, {
-              headers: { 'x-apisports-key': API_KEY },
-              params: { fixture: f.fixture.id, bookmaker: 8 } // Bet365
-            });
-            const oddsData = oddsRes.data.response[0]?.bookmakers[0]?.bets.find(b => b.name === 'Match Winner')?.values;
-            if (oddsData) {
-              oddsHome = oddsData.find(v => v.value === 'Home')?.odd || null;
-              oddsDraw = oddsData.find(v => v.value === 'Draw')?.odd || null;
-              oddsAway = oddsData.find(v => v.value === 'Away')?.odd || null;
-            }
-          } catch (e) {
-            console.error(`Could not fetch odds for fixture ${f.fixture.id}`);
+          
+          if (bookmaker && bookmaker.markets && bookmaker.markets[0]) {
+            const outcomes = bookmaker.markets[0].outcomes;
+            const homeOutcome = outcomes.find(o => o.name === f.home_team);
+            const awayOutcome = outcomes.find(o => o.name === f.away_team);
+            const drawOutcome = outcomes.find(o => o.name.toLowerCase() === 'draw');
+            
+            oddsHome = homeOutcome ? homeOutcome.price : null;
+            oddsAway = awayOutcome ? awayOutcome.price : null;
+            oddsDraw = drawOutcome ? drawOutcome.price : null;
           }
 
+          // Use f.id as fixture_id (string)
+          // The Odds API doesn't provide status directly before match, we default to 'NS' (Not Started)
           await pool.query(`
             INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -85,17 +91,23 @@ async function fetchUpcomingMatches() {
             SET odds_home = EXCLUDED.odds_home, 
                 odds_draw = EXCLUDED.odds_draw, 
                 odds_away = EXCLUDED.odds_away,
-                status = EXCLUDED.status;
+                date = EXCLUDED.date;
           `, [
-            f.fixture.id, f.league.name, f.teams.home.name, f.teams.away.name, 
-            f.fixture.date, f.fixture.status.short, oddsHome, oddsDraw, oddsAway
+            f.id, sport, f.home_team, f.away_team, 
+            f.commence_time, 'NS', oddsHome, oddsDraw, oddsAway
           ]);
         }
+      } catch (e) {
+         if (e.response && e.response.status === 401) {
+             console.error('Invalid THE_ODDS_API_KEY!');
+         } else {
+             console.error(`Error fetching ${sport}`, e.message);
+         }
       }
     }
-    console.log('Successfully saved matches to DB.');
+    console.log('Successfully saved matches to DB from The Odds API.');
   } catch (e) {
-    console.error('Error fetching from API-Football', e.message);
+    console.error('Core Error', e.message);
   }
 }
 
@@ -103,12 +115,14 @@ async function start() {
   await initDB();
   await fetchUpcomingMatches(); // initial run
   
-  // Run every 2 hours
-  cron.schedule('0 */2 * * *', () => {
+  // The Odds API Free tier gives 500 requests per month.
+  // 6 sports per sync. Syncing every 12 hours = 12 requests/day = 360/month.
+  // This safely guards the 500/month limit.
+  cron.schedule('0 */12 * * *', () => {
     fetchUpcomingMatches();
   });
   
-  console.log('Data service started and scheduled.');
+  console.log('Data service started and safely scheduled for The Odds API limits.');
 }
 
 // Ensure the process stays alive even without express
