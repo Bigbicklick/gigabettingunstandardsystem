@@ -104,18 +104,60 @@ async function analyzeUpcomingMatches() {
   }
 }
 
+async function sendHourlyReport() {
+  if (!DISCORD_WEBHOOK_URL) return;
+  const client = await pool.connect();
+  try {
+    const res = await client.query(`
+      SELECT home_team, away_team, ai_forecast, ai_edge 
+      FROM matches 
+      WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
+      AND ai_forecast IS NOT NULL
+    `);
+    
+    if (res.rows.length === 0) {
+      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [GigaBet AI]:**\nBrak nadchodzących meczy do analizy na najbliższe 24h w śledzonych ligach." });
+      return;
+    }
+    
+    let report = "ℹ️ **RAPORT GODZINNY [GigaBet AI]:**\nPrzeanalizowałem dzisiejsze mecze w tle (szukając Krawędzi), ale obecnie nie ma wystarczająco mocnych sygnałów (Value Bets). Oto lista poddanych analizie spotkań na najbliższe 24h:\n\n";
+    let count = 0;
+    for (const m of res.rows) {
+      if (count < 15) {
+         report += `⚽ ${m.home_team} vs ${m.away_team} | AI Typ: ${m.ai_forecast} | Obliczony Edge: ${m.ai_edge}%\n`;
+         count++;
+      }
+    }
+    if (res.rows.length > 15) {
+       report += `\n...oraz ${res.rows.length - 15} innych meczów (łącznie ${res.rows.length}).`;
+    }
+    
+    await axios.post(DISCORD_WEBHOOK_URL, { content: report });
+    console.log('Sent hourly report to Discord.');
+  } catch (err) {
+    console.error('Error sending hourly report:', err);
+  } finally {
+    client.release();
+  }
+}
+
 function start() {
   // Let the DB init and data-service run first
   setTimeout(() => {
     analyzeUpcomingMatches();
   }, 10000);
   
-  // Run every 10 minutes (user requirement: Run every 5–10 minutes)
+  // Run every 10 minutes for signals
   cron.schedule('*/10 * * * *', () => {
     analyzeUpcomingMatches();
   });
+
+  // Run every hour at minute 0 for the summary report
+  cron.schedule('0 * * * *', () => {
+    sendHourlyReport();
+  });
   
-  console.log('Analysis service scheduled to run every 10 minutes.');
+  console.log('Analysis service scheduled to run every 10 minutes (Signals) and every 1 hour (Reports).');
 }
 
 start();
