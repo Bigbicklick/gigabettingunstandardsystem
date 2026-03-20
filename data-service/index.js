@@ -65,46 +65,46 @@ async function fetchUpcomingMatches() {
         console.log(`Found ${fixtures.length} upcoming fixtures for ${sport}`);
         
         for (const f of fixtures) {
-          // Find the best valid bookmaker odds (e.g. bet365, or the first one available)
-          let bookmaker = f.bookmakers.find(b => b.key === 'bet365') || f.bookmakers[0];
           let oddsHome = null, oddsDraw = null, oddsAway = null;
           let oddsBttsYes = null, oddsBttsNo = null;
           let oddsOuOver = null, oddsOuUnder = null;
           let oddsCornersOver = null, oddsCornersUnder = null;
           
-          if (bookmaker && bookmaker.markets) {
-            const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
-            if (h2hMarket) {
-              const homeOutcome = h2hMarket.outcomes.find(o => o.name === f.home_team);
-              const awayOutcome = h2hMarket.outcomes.find(o => o.name === f.away_team);
-              const drawOutcome = h2hMarket.outcomes.find(o => o.name.toLowerCase() === 'draw');
-              oddsHome = homeOutcome ? homeOutcome.price : null;
-              oddsAway = awayOutcome ? awayOutcome.price : null;
-              oddsDraw = drawOutcome ? drawOutcome.price : null;
-            }
-            
-            const bttsMarket = bookmaker.markets.find(m => m.key === 'btts');
-            if (bttsMarket) {
-              const yesOutcome = bttsMarket.outcomes.find(o => o.name === 'Yes');
-              const noOutcome = bttsMarket.outcomes.find(o => o.name === 'No');
-              oddsBttsYes = yesOutcome ? yesOutcome.price : null;
-              oddsBttsNo = noOutcome ? noOutcome.price : null;
-            }
-            
-            const totalsMarket = bookmaker.markets.find(m => m.key === 'totals');
-            if (totalsMarket) {
-              const overOutcome = totalsMarket.outcomes.find(o => o.name === 'Over');
-              const underOutcome = totalsMarket.outcomes.find(o => o.name === 'Under');
-              oddsOuOver = overOutcome ? overOutcome.price : null;
-              oddsOuUnder = underOutcome ? underOutcome.price : null;
-            }
-            
-            const cornersMarket = bookmaker.markets.find(m => m.key === 'alternate_totals_corners' || m.key === 'corners');
-            if (cornersMarket) {
-              const overOutcome = cornersMarket.outcomes.find(o => o.name === 'Over');
-              const underOutcome = cornersMarket.outcomes.find(o => o.name === 'Under');
-              oddsCornersOver = overOutcome ? overOutcome.price : null;
-              oddsCornersUnder = underOutcome ? underOutcome.price : null;
+          for (const bookmaker of f.bookmakers) {
+            if (bookmaker && bookmaker.markets) {
+              const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+              if (h2hMarket && !oddsHome) {
+                const homeOutcome = h2hMarket.outcomes.find(o => o.name === f.home_team);
+                const awayOutcome = h2hMarket.outcomes.find(o => o.name === f.away_team);
+                const drawOutcome = h2hMarket.outcomes.find(o => o.name.toLowerCase() === 'draw');
+                oddsHome = homeOutcome ? homeOutcome.price : null;
+                oddsAway = awayOutcome ? awayOutcome.price : null;
+                oddsDraw = drawOutcome ? drawOutcome.price : null;
+              }
+              
+              const bttsMarket = bookmaker.markets.find(m => m.key === 'btts');
+              if (bttsMarket && !oddsBttsYes) {
+                const yesOutcome = bttsMarket.outcomes.find(o => o.name === 'Yes');
+                const noOutcome = bttsMarket.outcomes.find(o => o.name === 'No');
+                oddsBttsYes = yesOutcome ? yesOutcome.price : null;
+                oddsBttsNo = noOutcome ? noOutcome.price : null;
+              }
+              
+              const totalsMarket = bookmaker.markets.find(m => m.key === 'totals');
+              if (totalsMarket && !oddsOuOver) {
+                const overOutcome = totalsMarket.outcomes.find(o => o.name === 'Over');
+                const underOutcome = totalsMarket.outcomes.find(o => o.name === 'Under');
+                oddsOuOver = overOutcome ? overOutcome.price : null;
+                oddsOuUnder = underOutcome ? underOutcome.price : null;
+              }
+              
+              const cornersMarket = bookmaker.markets.find(m => m.key === 'alternate_totals_corners' || m.key === 'corners');
+              if (cornersMarket && !oddsCornersOver) {
+                const overOutcome = cornersMarket.outcomes.find(o => o.name.includes('Over'));
+                const underOutcome = cornersMarket.outcomes.find(o => o.name.includes('Under'));
+                oddsCornersOver = overOutcome ? overOutcome.price : null;
+                oddsCornersUnder = underOutcome ? underOutcome.price : null;
+              }
             }
           }
 
