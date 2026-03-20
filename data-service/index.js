@@ -46,9 +46,7 @@ async function fetchUpcomingMatches() {
       'soccer_epl',             // Premier League
       'soccer_spain_la_liga',   // La Liga
       'soccer_italy_serie_a',   // Serie A
-      'soccer_germany_bundesliga', // Bundesliga
-      'soccer_france_ligue_one',   // Ligue 1
-      'soccer_usa_mls'          // MLS
+      'soccer_germany_bundesliga' // Bundesliga
     ]; 
     
     for (const sport of sports) {
@@ -58,7 +56,7 @@ async function fetchUpcomingMatches() {
           params: {
             apiKey: API_KEY,
             regions: 'eu,uk', // bet365, pinnacle etc
-            markets: 'h2h,btts',
+            markets: 'h2h,btts,totals,alternate_totals_corners',
             oddsFormat: 'decimal'
           }
         });
@@ -71,6 +69,8 @@ async function fetchUpcomingMatches() {
           let bookmaker = f.bookmakers.find(b => b.key === 'bet365') || f.bookmakers[0];
           let oddsHome = null, oddsDraw = null, oddsAway = null;
           let oddsBttsYes = null, oddsBttsNo = null;
+          let oddsOuOver = null, oddsOuUnder = null;
+          let oddsCornersOver = null, oddsCornersUnder = null;
           
           if (bookmaker && bookmaker.markets) {
             const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
@@ -90,23 +90,43 @@ async function fetchUpcomingMatches() {
               oddsBttsYes = yesOutcome ? yesOutcome.price : null;
               oddsBttsNo = noOutcome ? noOutcome.price : null;
             }
+            
+            const totalsMarket = bookmaker.markets.find(m => m.key === 'totals');
+            if (totalsMarket) {
+              const overOutcome = totalsMarket.outcomes.find(o => o.name === 'Over');
+              const underOutcome = totalsMarket.outcomes.find(o => o.name === 'Under');
+              oddsOuOver = overOutcome ? overOutcome.price : null;
+              oddsOuUnder = underOutcome ? underOutcome.price : null;
+            }
+            
+            const cornersMarket = bookmaker.markets.find(m => m.key === 'alternate_totals_corners' || m.key === 'corners');
+            if (cornersMarket) {
+              const overOutcome = cornersMarket.outcomes.find(o => o.name === 'Over');
+              const underOutcome = cornersMarket.outcomes.find(o => o.name === 'Under');
+              oddsCornersOver = overOutcome ? overOutcome.price : null;
+              oddsCornersUnder = underOutcome ? underOutcome.price : null;
+            }
           }
 
           // Use f.id as fixture_id (string)
           // The Odds API doesn't provide status directly before match, we default to 'NS' (Not Started)
           await pool.query(`
-            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT (fixture_id) DO UPDATE 
             SET odds_home = EXCLUDED.odds_home, 
                 odds_draw = EXCLUDED.odds_draw, 
                 odds_away = EXCLUDED.odds_away,
                 odds_btts_yes = EXCLUDED.odds_btts_yes,
                 odds_btts_no = EXCLUDED.odds_btts_no,
+                odds_ou_over = EXCLUDED.odds_ou_over,
+                odds_ou_under = EXCLUDED.odds_ou_under,
+                odds_corners_over = EXCLUDED.odds_corners_over,
+                odds_corners_under = EXCLUDED.odds_corners_under,
                 date = EXCLUDED.date;
           `, [
             f.id, sport, f.home_team, f.away_team, 
-            f.commence_time, 'NS', oddsHome, oddsDraw, oddsAway, oddsBttsYes, oddsBttsNo
+            f.commence_time, 'NS', oddsHome, oddsDraw, oddsAway, oddsBttsYes, oddsBttsNo, oddsOuOver, oddsOuUnder, oddsCornersOver, oddsCornersUnder
           ]);
         }
       } catch (e) {

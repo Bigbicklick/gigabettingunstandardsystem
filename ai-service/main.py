@@ -17,6 +17,8 @@ STATE_PATH = ml_pipeline.STATE_PATH
 
 model = None
 model_btts = None
+model_ou = None
+model_corners = None
 team_states = None
 
 class PredictionRequest(BaseModel):
@@ -27,15 +29,21 @@ class PredictionRequest(BaseModel):
     odds_away: Optional[float] = None
     odds_btts_yes: Optional[float] = None
     odds_btts_no: Optional[float] = None
+    odds_ou_over: Optional[float] = None
+    odds_ou_under: Optional[float] = None
+    odds_corners_over: Optional[float] = None
+    odds_corners_under: Optional[float] = None
 
 def load_ai():
-    global model, model_btts, team_states
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH) or not os.path.exists('model_btts.joblib'):
+    global model, model_btts, model_ou, model_corners, team_states
+    if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH) or not os.path.exists('model_ou.joblib'):
         logger.warning("Model not found. Executing ML Pipeline to fetch data and train model...")
         ml_pipeline.train_model()
     
     model = joblib.load(MODEL_PATH)
     model_btts = joblib.load('model_btts.joblib')
+    model_ou = joblib.load('model_ou.joblib')
+    model_corners = joblib.load('model_corners.joblib')
     team_states = joblib.load(STATE_PATH)
     logger.info("Models and team states loaded successfully.")
 
@@ -83,6 +91,16 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     probs_btts = model_btts.predict_proba(X)[0]
     p_btts_no = float(probs_btts[0])
     p_btts_yes = float(probs_btts[1])
+    
+    # Over/Under predictions
+    probs_ou = model_ou.predict_proba(X)[0]
+    p_ou_under = float(probs_ou[0])
+    p_ou_over = float(probs_ou[1])
+    
+    # Corners predictions
+    probs_cor = model_corners.predict_proba(X)[0]
+    p_cor_under = float(probs_cor[0])
+    p_cor_over = float(probs_cor[1])
     
     # Prediction class
     best_idx = np.argmax(probs)
@@ -165,6 +183,76 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             kelly_fraction = (p * b - q) / b
             if kelly_fraction > 0:
                 btts_recommended_stake = round((kelly_fraction * 0.25) * 100, 2)
+                
+    # Over/Under value bet logic
+    ou_value_bet = False
+    ou_best_bet = None
+    ou_highest_edge = 0.0
+    ou_model_prob = 0.0
+    ou_bookie_odds = 0.0
+    
+    if req.odds_ou_over and req.odds_ou_under:
+        i_over = calculate_implied_prob(req.odds_ou_over)
+        i_under = calculate_implied_prob(req.odds_ou_under)
+        
+        edges_ou = {
+            "Over 2.5 Goals": (p_ou_over - i_over, p_ou_over, req.odds_ou_over),
+            "Under 2.5 Goals": (p_ou_under - i_under, p_ou_under, req.odds_ou_under)
+        }
+        
+        for k, (edge, m_prob, _odds) in edges_ou.items():
+            if edge > ou_highest_edge:
+                ou_highest_edge = edge
+                ou_best_bet = k
+                ou_model_prob = m_prob
+                ou_bookie_odds = _odds
+                
+        if ou_highest_edge > 0.05:
+            ou_value_bet = True
+
+    ou_recommended_stake = 0.0
+    if ou_value_bet and ou_best_bet:
+        b = ou_bookie_odds - 1.0
+        p = ou_model_prob
+        if b > 0:
+            kf = (p * b - (1.0 - p)) / b
+            if kf > 0:
+                ou_recommended_stake = round((kf * 0.25) * 100, 2)
+
+    # Corners value bet logic
+    cor_value_bet = False
+    cor_best_bet = None
+    cor_highest_edge = 0.0
+    cor_model_prob = 0.0
+    cor_bookie_odds = 0.0
+    
+    if req.odds_corners_over and req.odds_corners_under:
+        i_over_cor = calculate_implied_prob(req.odds_corners_over)
+        i_under_cor = calculate_implied_prob(req.odds_corners_under)
+        
+        edges_cor = {
+            "Over 9.5 Corners": (p_cor_over - i_over_cor, p_cor_over, req.odds_corners_over),
+            "Under 9.5 Corners": (p_cor_under - i_under_cor, p_cor_under, req.odds_corners_under)
+        }
+        
+        for k, (edge, m_prob, _odds) in edges_cor.items():
+            if edge > cor_highest_edge:
+                cor_highest_edge = edge
+                cor_best_bet = k
+                cor_model_prob = m_prob
+                cor_bookie_odds = _odds
+                
+        if cor_highest_edge > 0.05:
+            cor_value_bet = True
+
+    cor_recommended_stake = 0.0
+    if cor_value_bet and cor_best_bet:
+        b = cor_bookie_odds - 1.0
+        p = cor_model_prob
+        if b > 0:
+            kf = (p * b - (1.0 - p)) / b
+            if kf > 0:
+                cor_recommended_stake = round((kf * 0.25) * 100, 2)
 
     confidence_score = float(max(p_home, p_draw, p_away) * 10) # 0 to 10
     
@@ -195,6 +283,24 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             "bookmaker_odds": btts_bookie_odds,
             "confidence_score": round(confidence_score, 1),
             "recommended_stake_percentage": btts_recommended_stake
+        },
+        "ou_value_bet": {
+            "is_value": ou_value_bet,
+            "recommended_bet": ou_best_bet,
+            "edge_percent": round(ou_highest_edge * 100, 2),
+            "model_probability": round(ou_model_prob * 100, 2),
+            "bookmaker_odds": ou_bookie_odds,
+            "confidence_score": round(confidence_score, 1),
+            "recommended_stake_percentage": ou_recommended_stake
+        },
+        "corners_value_bet": {
+            "is_value": cor_value_bet,
+            "recommended_bet": cor_best_bet,
+            "edge_percent": round(cor_highest_edge * 100, 2),
+            "model_probability": round(cor_model_prob * 100, 2),
+            "bookmaker_odds": cor_bookie_odds,
+            "confidence_score": round(confidence_score, 1),
+            "recommended_stake_percentage": cor_recommended_stake
         }
     }
 

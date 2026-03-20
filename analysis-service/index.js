@@ -38,12 +38,18 @@ async function analyzeUpcomingMatches() {
           odds_draw: match.odds_draw ? parseFloat(match.odds_draw) : null,
           odds_away: match.odds_away ? parseFloat(match.odds_away) : null,
           odds_btts_yes: match.odds_btts_yes ? parseFloat(match.odds_btts_yes) : null,
-          odds_btts_no: match.odds_btts_no ? parseFloat(match.odds_btts_no) : null
+          odds_btts_no: match.odds_btts_no ? parseFloat(match.odds_btts_no) : null,
+          odds_ou_over: match.odds_ou_over ? parseFloat(match.odds_ou_over) : null,
+          odds_ou_under: match.odds_ou_under ? parseFloat(match.odds_ou_under) : null,
+          odds_corners_over: match.odds_corners_over ? parseFloat(match.odds_corners_over) : null,
+          odds_corners_under: match.odds_corners_under ? parseFloat(match.odds_corners_under) : null
         });
         
         const prediction = aiResponse.data;
         const h2h = prediction.value_bet;
         const btts = prediction.btts_value_bet;
+        const ou = prediction.ou_value_bet;
+        const cor = prediction.corners_value_bet;
         const timeStr = new Date(match.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
         
         // H2H Signal
@@ -76,6 +82,36 @@ async function analyzeUpcomingMatches() {
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgBtts.trim() });
         }
         
+        // Over/Under Signal
+        if (ou && ou.is_value && ou.confidence_score > 6.0 && ou.edge_percent > 5.0) {
+          const msgOu = `
+⚽ **GIGA SIGNAL: GOALS OVER/UNDER 2.5** ⚽
+🏟️ **MATCH**: ${match.home_team} vs ${match.away_team}
+⏰ **TIME**: ${timeStr}
+📉 **PREDICTION**: ${ou.recommended_bet}
+💰 **MIN ODDS**: ${ou.bookmaker_odds}
+📈 **MODEL PROBABILITY**: ${ou.model_probability}%
+✅ **VALUE BET EDGE**: ${ou.edge_percent}%
+🧠 **CONFIDENCE**: ${ou.confidence_score}/10
+💸 **SUGGESTED STAKE**: ${ou.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+          if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgOu.trim() });
+        }
+        
+        // Corners Signal
+        if (cor && cor.is_value && cor.confidence_score > 6.0 && cor.edge_percent > 5.0) {
+          const msgCor = `
+🚩 **GIGA SIGNAL: CORNERS TOTAL (O/U 9.5)** 🚩
+⚽ **MATCH**: ${match.home_team} vs ${match.away_team}
+⏰ **TIME**: ${timeStr}
+📉 **PREDICTION**: ${cor.recommended_bet}
+💰 **MIN ODDS**: ${cor.bookmaker_odds}
+📈 **MODEL PROBABILITY**: ${cor.model_probability}%
+✅ **VALUE BET EDGE**: ${cor.edge_percent}%
+🧠 **CONFIDENCE**: ${cor.confidence_score}/10
+💸 **SUGGESTED STAKE**: ${cor.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+          if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgCor.trim() });
+        }
+        
         // Mark as sent so we don't query it again endlessly
         await client.query(`
           UPDATE matches 
@@ -83,13 +119,21 @@ async function analyzeUpcomingMatches() {
               ai_forecast = $1, 
               ai_edge = $2,
               ai_btts_forecast = $3,
-              ai_btts_edge = $4
-          WHERE fixture_id = $5
+              ai_btts_edge = $4,
+              ai_ou_forecast = $5,
+              ai_ou_edge = $6,
+              ai_corners_forecast = $7,
+              ai_corners_edge = $8
+          WHERE fixture_id = $9
         `, [
           prediction.most_likely_outcome, 
           h2h ? h2h.edge_percent : null, 
           btts ? btts.recommended_bet : null,
           btts ? btts.edge_percent : null,
+          ou ? ou.recommended_bet : null,
+          ou ? ou.edge_percent : null,
+          cor ? cor.recommended_bet : null,
+          cor ? cor.edge_percent : null,
           match.fixture_id
         ]);
         
@@ -117,22 +161,26 @@ async function sendHourlyReport() {
   const client = await pool.connect();
   try {
     const res = await client.query(`
-      SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge
+      SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge
       FROM matches 
       WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
       AND ai_forecast IS NOT NULL
     `);
     
     if (res.rows.length === 0) {
-      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [GigaBet AI]:**\nBrak nadchodzących meczy do analizy na najbliższe 24h w śledzonych ligach." });
+      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy do analizy na najbliższe 24h w 4 śledzonych ligach europejskich." });
       return;
     }
     
-    let report = "ℹ️ **RAPORT GODZINNY [Multi-Market]:**\nPrzeanalizowałem dzisiejsze mecze w tle (szukając Krawędzi), ale obecnie nie ma wystarczająco mocnych sygnałów (Value Bets). Oto lista poddanych analizie spotkań na najbliższe 24h:\n\n";
+    let report = "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nPrzeanalizowałem dzisiejsze mecze w tle. Szukam w pełni bezpiecznych matematycznych przewag. Brak pewniaków. Lista zbadanych spotkań w oparciu o The Odds API:\n\n";
     let count = 0;
     for (const m of res.rows) {
-      if (count < 15) {
-         report += `⚽ ${m.home_team} vs ${m.away_team}\n   ├─ H2H: ${m.ai_forecast} (Edge: ${m.ai_edge}%)\n   └─ BTTS: ${m.ai_btts_forecast || 'N/A'} (Edge: ${m.ai_btts_edge || 0}%)\n`;
+      if (count < 10) {
+         report += `⚽ **${m.home_team} vs ${m.away_team}**\n`;
+         report += `   ├─ Zwycięzca: ${m.ai_forecast} (Edge: ${m.ai_edge}%)\n`;
+         report += `   ├─ O.D. Strzelą: ${m.ai_btts_forecast || 'N/A'} (Edge: ${m.ai_btts_edge || 0}%)\n`;
+         report += `   ├─ Liczba Goli: ${m.ai_ou_forecast || 'N/A'} (Edge: ${m.ai_ou_edge || 0}%)\n`;
+         report += `   └─ Rzuty Rożne: ${m.ai_corners_forecast || 'N/A'} (Edge: ${m.ai_corners_edge || 0}%)\n\n`;
          count++;
       }
     }

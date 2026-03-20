@@ -43,8 +43,9 @@ def download_data():
     data = data.dropna(subset=['HomeTeam', 'AwayTeam', 'FTR'])
     
     # We only need specific columns
-    cols_to_keep = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR']
+    cols_to_keep = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR', 'HC', 'AC']
     # If odds exist, we can use them for reference, but our model predicts outcome from stats
+    data = data.dropna(subset=cols_to_keep)
     data = data[cols_to_keep]
     data['Date'] = pd.to_datetime(data['Date'], errors='coerce', dayfirst=True)
     data = data.sort_values(by='Date').reset_index(drop=True)
@@ -91,6 +92,8 @@ def feature_engineering(data):
     features = []
     labels_h2h = []
     labels_btts = []
+    labels_ou = []
+    labels_corners = []
     
     # Dictionary to keep track of team states
     team_states = {}
@@ -125,9 +128,18 @@ def feature_engineering(data):
             ]
             features.append(feature_row)
             labels_h2h.append(label_map[ftr])
+            
             # BTTS mapping: 1 if both scored, 0 otherwise
             btts_val = 1 if row['FTHG'] > 0 and row['FTAG'] > 0 else 0
             labels_btts.append(btts_val)
+            
+            # Over/Under 2.5 Goals
+            ou_val = 1 if (row['FTHG'] + row['FTAG']) > 2.5 else 0
+            labels_ou.append(ou_val)
+            
+            # Corners > 9.5
+            corners_val = 1 if (row['HC'] + row['AC']) > 9.5 else 0
+            labels_corners.append(corners_val)
             
         # Update team states AFTER the match
         if ftr == 'H':
@@ -143,16 +155,18 @@ def feature_engineering(data):
     X = np.array(features)
     y_h2h = np.array(labels_h2h)
     y_btts = np.array(labels_btts)
-    return X, y_h2h, y_btts, team_states
+    y_ou = np.array(labels_ou)
+    y_corners = np.array(labels_corners)
+    return X, y_h2h, y_btts, y_ou, y_corners, team_states
 
 def train_model():
     """Builds and trains the ML model pipeline."""
     data = download_data()
-    X, y_h2h, y_btts, team_states = feature_engineering(data)
+    X, y_h2h, y_btts, y_ou, y_corners, team_states = feature_engineering(data)
     
     print(f"Dataset shape: {X.shape}")
-    X_train, X_test, y_h2h_train, y_h2h_test, y_btts_train, y_btts_test = train_test_split(
-        X, y_h2h, y_btts, test_size=0.1, random_state=42
+    X_train, X_test, y_h2h_train, y_h2h_test, y_btts_train, y_btts_test, y_ou_train, y_ou_test, y_cor_train, y_cor_test = train_test_split(
+        X, y_h2h, y_btts, y_ou, y_corners, test_size=0.1, random_state=42
     )
     
     print("Training XGBoost H2H Classifier...")
@@ -190,11 +204,43 @@ def train_model():
     acc_btts = accuracy_score(y_btts_test, btts_pred)
     print(f"BTTS Model Accuracy: {acc_btts:.4f}")
     
+    print("Training XGBoost Over/Under 2.5 Classifier...")
+    model_ou = XGBClassifier(
+        objective='binary:logistic',
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42
+    )
+    model_ou.fit(X_train, y_ou_train)
+    ou_pred = model_ou.predict(X_test)
+    acc_ou = accuracy_score(y_ou_test, ou_pred)
+    print(f"Over/Under Model Accuracy: {acc_ou:.4f}")
+
+    print("Training XGBoost Corners >9.5 Classifier...")
+    model_corners = XGBClassifier(
+        objective='binary:logistic',
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42
+    )
+    model_corners.fit(X_train, y_cor_train)
+    cor_pred = model_corners.predict(X_test)
+    acc_cor = accuracy_score(y_cor_test, cor_pred)
+    print(f"Corners Model Accuracy: {acc_cor:.4f}")
+    
     # Save model and team states
     joblib.dump(model, MODEL_PATH)
     joblib.dump(model_btts, 'model_btts.joblib')
+    joblib.dump(model_ou, 'model_ou.joblib')
+    joblib.dump(model_corners, 'model_corners.joblib')
     joblib.dump(team_states, STATE_PATH)
-    print(f"Models and states saved successfully to {MODEL_PATH}, model_btts.joblib and {STATE_PATH}")
+    print(f"All 4 models and states saved successfully to {STATE_PATH}")
 
 if __name__ == "__main__":
     train_model()
