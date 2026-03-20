@@ -151,7 +151,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
 
     btts_value_bet = False
     btts_best_bet = None
-    btts_highest_edge = 0.0
+    btts_highest_edge = -100.0
     btts_model_prob = 0.0
     btts_bookie_odds = 0.0
     
@@ -187,7 +187,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     # Over/Under value bet logic
     ou_value_bet = False
     ou_best_bet = None
-    ou_highest_edge = 0.0
+    ou_highest_edge = -100.0
     ou_model_prob = 0.0
     ou_bookie_odds = 0.0
     
@@ -222,7 +222,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     # Corners value bet logic
     cor_value_bet = False
     cor_best_bet = None
-    cor_highest_edge = 0.0
+    cor_highest_edge = -100.0
     cor_model_prob = 0.0
     cor_bookie_odds = 0.0
     
