@@ -147,14 +147,14 @@ async function start() {
   await initDB();
   await fetchUpcomingMatches(); // initial run
   
-  // The Odds API Free tier gives 500 requests per month.
-  // 6 sports per sync * 2 markets = roughly 12 credits per region.
-  // Syncing ONCE a day restricts usage to stay well under the 500 limit.
-  cron.schedule('0 0 * * *', () => {
+  // The user explicitly authorized ignoring the 500 requests/month limit
+  // in favor of getting bets sooner (will use multiple API keys if needed).
+  // Fetching every 2 hours (12x a day) for 4 markets.
+  cron.schedule('0 */2 * * *', () => {
     fetchUpcomingMatches();
   });
   
-  console.log('Data service started and scheduled to run once a day at midnight.');
+  console.log('Data service started and aggressively scheduled to run every 2 hours.');
 }
 
 // Ensure the process stays alive even without express
