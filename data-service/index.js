@@ -46,8 +46,8 @@ async function fetchUpcomingMatches() {
   });
   
   try {
-    // Top 5 leagues
-    const leagues = [39, 140, 135, 78, 61]; 
+    // Top 5 leagues + MLS (League 253) to cover International Breaks
+    const leagues = [39, 140, 135, 78, 61, 253]; 
     const season = new Date().getMonth() < 7 ? new Date().getFullYear() - 1 : new Date().getFullYear();
     
     for (const date of dates) {
