@@ -11,33 +11,7 @@ const pool = new Pool({
   connectionString: DB_URL,
 });
 
-async function notifyDiscord(matchData) {
-  if (!DISCORD_WEBHOOK_URL) {
-    console.log('No DISCORD_WEBHOOK_URL provided, skipping discord notification.');
-    return;
-  }
-  
-  const timeStr = new Date(matchData.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  
-  const message = `
-🔥 MATCH: ${matchData.home_team} vs ${matchData.away_team}
-⏰ TIME: ${timeStr}
-📊 PREDICTION: ${matchData.prediction.most_likely_outcome}
-💰 ODDS: ${matchData.prediction.value_bet.bookmaker_odds}
-📈 MODEL PROBABILITY: ${matchData.prediction.value_bet.model_probability}%
-✅ VALUE BET: YES
-🧠 CONFIDENCE: ${matchData.prediction.value_bet.confidence_score}/10
-💸 SUGGESTED STAKE: ${matchData.prediction.value_bet.recommended_stake_percentage}% of bankroll (1/4 Kelly)
-`;
-
-  try {
-    await axios.post(DISCORD_WEBHOOK_URL, { content: message.trim() });
-    console.log(`Successfully sent to Discord: ${matchData.home_team} vs ${matchData.away_team}`);
-  } catch (err) {
-    console.error('Error sending to Discord:', err.message);
-  }
-}
-
+// Notification functions handled inline
 async function analyzeUpcomingMatches() {
   console.log('Running analysis on upcoming matches...');
   const client = await pool.connect();
@@ -57,33 +31,67 @@ async function analyzeUpcomingMatches() {
     
     for (const match of res.rows) {
       try {
-        // Query AI Service
         const aiResponse = await axios.post(`${AI_SERVICE_URL}/predict`, {
           home_team: match.home_team,
           away_team: match.away_team,
-          odds_home: parseFloat(match.odds_home),
-          odds_draw: parseFloat(match.odds_draw),
-          odds_away: parseFloat(match.odds_away)
+          odds_home: match.odds_home ? parseFloat(match.odds_home) : null,
+          odds_draw: match.odds_draw ? parseFloat(match.odds_draw) : null,
+          odds_away: match.odds_away ? parseFloat(match.odds_away) : null,
+          odds_btts_yes: match.odds_btts_yes ? parseFloat(match.odds_btts_yes) : null,
+          odds_btts_no: match.odds_btts_no ? parseFloat(match.odds_btts_no) : null
         });
         
         const prediction = aiResponse.data;
+        const h2h = prediction.value_bet;
+        const btts = prediction.btts_value_bet;
+        const timeStr = new Date(match.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        
+        // H2H Signal
+        if (h2h && h2h.is_value && h2h.confidence_score > 7.0 && h2h.edge_percent > 5.0) {
+          const msg = `
+🔥 **GIGA SIGNAL: H2H MARKET** 🔥
+⚽ **MATCH**: ${match.home_team} vs ${match.away_team}
+⏰ **TIME**: ${timeStr}
+📊 **PREDICTION**: ${prediction.most_likely_outcome}
+💰 **MIN ODDS**: ${h2h.bookmaker_odds}
+📈 **MODEL PROBABILITY**: ${h2h.model_probability}%
+✅ **VALUE BET EDGE**: ${h2h.edge_percent}%
+🧠 **CONFIDENCE**: ${h2h.confidence_score}/10
+💸 **SUGGESTED STAKE**: ${h2h.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+          if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msg.trim() });
+        }
+        
+        // BTTS Signal
+        if (btts && btts.is_value && btts.confidence_score > 6.0 && btts.edge_percent > 5.0) {
+          const msgBtts = `
+🥅 **GIGA SIGNAL: BTTS MARKET** (Obie Drużyny Strzelą) 🥅
+⚽ **MATCH**: ${match.home_team} vs ${match.away_team}
+⏰ **TIME**: ${timeStr}
+📉 **PREDICTION**: ${btts.recommended_bet}
+💰 **MIN ODDS**: ${btts.bookmaker_odds}
+📈 **MODEL PROBABILITY**: ${btts.model_probability}%
+✅ **VALUE BET EDGE**: ${btts.edge_percent}%
+🧠 **CONFIDENCE**: ${btts.confidence_score}/10
+💸 **SUGGESTED STAKE**: ${btts.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+          if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgBtts.trim() });
+        }
         
         // Mark as sent so we don't query it again endlessly
         await client.query(`
           UPDATE matches 
-          SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2 
-          WHERE fixture_id = $3
+          SET sent_to_discord = true, 
+              ai_forecast = $1, 
+              ai_edge = $2,
+              ai_btts_forecast = $3,
+              ai_btts_edge = $4
+          WHERE fixture_id = $5
         `, [
           prediction.most_likely_outcome, 
-          prediction.value_bet.edge_percent, 
+          h2h ? h2h.edge_percent : null, 
+          btts ? btts.recommended_bet : null,
+          btts ? btts.edge_percent : null,
           match.fixture_id
         ]);
-        
-        // Determine high-quality value bet
-        // The user asked for Only high-confidence bets -> confidence > 7 and edge > 5%
-        if (prediction.value_bet.is_value && prediction.value_bet.confidence_score > 7.0 && prediction.value_bet.edge_percent > 5.0) {
-          await notifyDiscord({ ...match, prediction });
-        }
         
       } catch (aiError) {
         // Normal to fail 404 if team wasn't in historical database (e.g. newly promoted)
@@ -109,7 +117,7 @@ async function sendHourlyReport() {
   const client = await pool.connect();
   try {
     const res = await client.query(`
-      SELECT home_team, away_team, ai_forecast, ai_edge 
+      SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge
       FROM matches 
       WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
       AND ai_forecast IS NOT NULL
@@ -120,11 +128,11 @@ async function sendHourlyReport() {
       return;
     }
     
-    let report = "ℹ️ **RAPORT GODZINNY [GigaBet AI]:**\nPrzeanalizowałem dzisiejsze mecze w tle (szukając Krawędzi), ale obecnie nie ma wystarczająco mocnych sygnałów (Value Bets). Oto lista poddanych analizie spotkań na najbliższe 24h:\n\n";
+    let report = "ℹ️ **RAPORT GODZINNY [Multi-Market]:**\nPrzeanalizowałem dzisiejsze mecze w tle (szukając Krawędzi), ale obecnie nie ma wystarczająco mocnych sygnałów (Value Bets). Oto lista poddanych analizie spotkań na najbliższe 24h:\n\n";
     let count = 0;
     for (const m of res.rows) {
       if (count < 15) {
-         report += `⚽ ${m.home_team} vs ${m.away_team} | AI Typ: ${m.ai_forecast} | Obliczony Edge: ${m.ai_edge}%\n`;
+         report += `⚽ ${m.home_team} vs ${m.away_team}\n   ├─ H2H: ${m.ai_forecast} (Edge: ${m.ai_edge}%)\n   └─ BTTS: ${m.ai_btts_forecast || 'N/A'} (Edge: ${m.ai_btts_edge || 0}%)\n`;
          count++;
       }
     }

@@ -16,6 +16,7 @@ MODEL_PATH = ml_pipeline.MODEL_PATH
 STATE_PATH = ml_pipeline.STATE_PATH
 
 model = None
+model_btts = None
 team_states = None
 
 class PredictionRequest(BaseModel):
@@ -24,16 +25,19 @@ class PredictionRequest(BaseModel):
     odds_home: Optional[float] = None
     odds_draw: Optional[float] = None
     odds_away: Optional[float] = None
+    odds_btts_yes: Optional[float] = None
+    odds_btts_no: Optional[float] = None
 
 def load_ai():
-    global model, team_states
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH):
+    global model, model_btts, team_states
+    if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH) or not os.path.exists('model_btts.joblib'):
         logger.warning("Model not found. Executing ML Pipeline to fetch data and train model...")
         ml_pipeline.train_model()
     
     model = joblib.load(MODEL_PATH)
+    model_btts = joblib.load('model_btts.joblib')
     team_states = joblib.load(STATE_PATH)
-    logger.info("Model and team states loaded successfully.")
+    logger.info("Models and team states loaded successfully.")
 
 @app.on_event("startup")
 async def startup_event():
@@ -74,6 +78,11 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     p_home = float(probs[0])
     p_draw = float(probs[1])
     p_away = float(probs[2])
+    
+    # BTTS predictions
+    probs_btts = model_btts.predict_proba(X)[0]
+    p_btts_no = float(probs_btts[0])
+    p_btts_yes = float(probs_btts[1])
     
     # Prediction class
     best_idx = np.argmax(probs)
@@ -122,6 +131,41 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             if kelly_fraction > 0:
                 recommended_stake = round((kelly_fraction * 0.25) * 100, 2)
 
+    btts_value_bet = False
+    btts_best_bet = None
+    btts_highest_edge = 0.0
+    btts_model_prob = 0.0
+    btts_bookie_odds = 0.0
+    
+    if req.odds_btts_yes and req.odds_btts_no:
+        i_yes = calculate_implied_prob(req.odds_btts_yes)
+        i_no = calculate_implied_prob(req.odds_btts_no)
+        
+        edges_btts = {
+            "Select YES": (p_btts_yes - i_yes, p_btts_yes, req.odds_btts_yes),
+            "Select NO": (p_btts_no - i_no, p_btts_no, req.odds_btts_no)
+        }
+        
+        for k, (edge, m_prob, _odds) in edges_btts.items():
+            if edge > btts_highest_edge:
+                btts_highest_edge = edge
+                btts_best_bet = k
+                btts_model_prob = m_prob
+                btts_bookie_odds = _odds
+                
+        if btts_highest_edge > 0.05:
+            btts_value_bet = True
+
+    btts_recommended_stake = 0.0
+    if btts_value_bet and btts_best_bet:
+        b = btts_bookie_odds - 1.0
+        p = btts_model_prob
+        q = 1.0 - p
+        if b > 0:
+            kelly_fraction = (p * b - q) / b
+            if kelly_fraction > 0:
+                btts_recommended_stake = round((kelly_fraction * 0.25) * 100, 2)
+
     confidence_score = float(max(p_home, p_draw, p_away) * 10) # 0 to 10
     
     return {
@@ -129,7 +173,9 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         "raw_probabilities": {
             "home": round(p_home * 100, 2),
             "draw": round(p_draw * 100, 2),
-            "away": round(p_away * 100, 2)
+            "away": round(p_away * 100, 2),
+            "btts_yes": round(p_btts_yes * 100, 2),
+            "btts_no": round(p_btts_no * 100, 2)
         },
         "most_likely_outcome": prediction_label,
         "value_bet": {
@@ -140,6 +186,15 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             "bookmaker_odds": bookie_odds,
             "confidence_score": round(confidence_score, 1),
             "recommended_stake_percentage": recommended_stake
+        },
+        "btts_value_bet": {
+            "is_value": btts_value_bet,
+            "recommended_bet": btts_best_bet,
+            "edge_percent": round(btts_highest_edge * 100, 2),
+            "model_probability": round(btts_model_prob * 100, 2),
+            "bookmaker_odds": btts_bookie_odds,
+            "confidence_score": round(confidence_score, 1),
+            "recommended_stake_percentage": btts_recommended_stake
         }
     }
 

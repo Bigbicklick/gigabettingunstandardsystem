@@ -58,7 +58,7 @@ async function fetchUpcomingMatches() {
           params: {
             apiKey: API_KEY,
             regions: 'eu,uk', // bet365, pinnacle etc
-            markets: 'h2h',
+            markets: 'h2h,btts',
             oddsFormat: 'decimal'
           }
         });
@@ -70,31 +70,43 @@ async function fetchUpcomingMatches() {
           // Find the best valid bookmaker odds (e.g. bet365, or the first one available)
           let bookmaker = f.bookmakers.find(b => b.key === 'bet365') || f.bookmakers[0];
           let oddsHome = null, oddsDraw = null, oddsAway = null;
+          let oddsBttsYes = null, oddsBttsNo = null;
           
-          if (bookmaker && bookmaker.markets && bookmaker.markets[0]) {
-            const outcomes = bookmaker.markets[0].outcomes;
-            const homeOutcome = outcomes.find(o => o.name === f.home_team);
-            const awayOutcome = outcomes.find(o => o.name === f.away_team);
-            const drawOutcome = outcomes.find(o => o.name.toLowerCase() === 'draw');
+          if (bookmaker && bookmaker.markets) {
+            const h2hMarket = bookmaker.markets.find(m => m.key === 'h2h');
+            if (h2hMarket) {
+              const homeOutcome = h2hMarket.outcomes.find(o => o.name === f.home_team);
+              const awayOutcome = h2hMarket.outcomes.find(o => o.name === f.away_team);
+              const drawOutcome = h2hMarket.outcomes.find(o => o.name.toLowerCase() === 'draw');
+              oddsHome = homeOutcome ? homeOutcome.price : null;
+              oddsAway = awayOutcome ? awayOutcome.price : null;
+              oddsDraw = drawOutcome ? drawOutcome.price : null;
+            }
             
-            oddsHome = homeOutcome ? homeOutcome.price : null;
-            oddsAway = awayOutcome ? awayOutcome.price : null;
-            oddsDraw = drawOutcome ? drawOutcome.price : null;
+            const bttsMarket = bookmaker.markets.find(m => m.key === 'btts');
+            if (bttsMarket) {
+              const yesOutcome = bttsMarket.outcomes.find(o => o.name === 'Yes');
+              const noOutcome = bttsMarket.outcomes.find(o => o.name === 'No');
+              oddsBttsYes = yesOutcome ? yesOutcome.price : null;
+              oddsBttsNo = noOutcome ? noOutcome.price : null;
+            }
           }
 
           // Use f.id as fixture_id (string)
           // The Odds API doesn't provide status directly before match, we default to 'NS' (Not Started)
           await pool.query(`
-            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (fixture_id) DO UPDATE 
             SET odds_home = EXCLUDED.odds_home, 
                 odds_draw = EXCLUDED.odds_draw, 
                 odds_away = EXCLUDED.odds_away,
+                odds_btts_yes = EXCLUDED.odds_btts_yes,
+                odds_btts_no = EXCLUDED.odds_btts_no,
                 date = EXCLUDED.date;
           `, [
             f.id, sport, f.home_team, f.away_team, 
-            f.commence_time, 'NS', oddsHome, oddsDraw, oddsAway
+            f.commence_time, 'NS', oddsHome, oddsDraw, oddsAway, oddsBttsYes, oddsBttsNo
           ]);
         }
       } catch (e) {
@@ -116,13 +128,13 @@ async function start() {
   await fetchUpcomingMatches(); // initial run
   
   // The Odds API Free tier gives 500 requests per month.
-  // 6 sports per sync. Syncing every 12 hours = 12 requests/day = 360/month.
-  // This safely guards the 500/month limit.
-  cron.schedule('0 */12 * * *', () => {
+  // 6 sports per sync * 2 markets = roughly 12 credits per region.
+  // Syncing ONCE a day restricts usage to stay well under the 500 limit.
+  cron.schedule('0 0 * * *', () => {
     fetchUpcomingMatches();
   });
   
-  console.log('Data service started and safely scheduled for The Odds API limits.');
+  console.log('Data service started and scheduled to run once a day at midnight.');
 }
 
 // Ensure the process stays alive even without express

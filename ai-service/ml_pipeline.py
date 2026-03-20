@@ -89,7 +89,8 @@ def feature_engineering(data):
     """Engineers rolling averages and form for teams chronologically."""
     print("Engineering features...")
     features = []
-    labels = []
+    labels_h2h = []
+    labels_btts = []
     
     # Dictionary to keep track of team states
     team_states = {}
@@ -123,7 +124,10 @@ def feature_engineering(data):
                 (h_gs - h_gc) - (a_gs - a_gc) # GD diff
             ]
             features.append(feature_row)
-            labels.append(label_map[ftr])
+            labels_h2h.append(label_map[ftr])
+            # BTTS mapping: 1 if both scored, 0 otherwise
+            btts_val = 1 if row['FTHG'] > 0 and row['FTAG'] > 0 else 0
+            labels_btts.append(btts_val)
             
         # Update team states AFTER the match
         if ftr == 'H':
@@ -137,18 +141,21 @@ def feature_engineering(data):
             team_states[away].update(row['FTAG'], row['FTHG'], 1)
             
     X = np.array(features)
-    y = np.array(labels)
-    return X, y, team_states
+    y_h2h = np.array(labels_h2h)
+    y_btts = np.array(labels_btts)
+    return X, y_h2h, y_btts, team_states
 
 def train_model():
     """Builds and trains the ML model pipeline."""
     data = download_data()
-    X, y, team_states = feature_engineering(data)
+    X, y_h2h, y_btts, team_states = feature_engineering(data)
     
     print(f"Dataset shape: {X.shape}")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+    X_train, X_test, y_h2h_train, y_h2h_test, y_btts_train, y_btts_test = train_test_split(
+        X, y_h2h, y_btts, test_size=0.1, random_state=42
+    )
     
-    print("Training XGBoost Classifier...")
+    print("Training XGBoost H2H Classifier...")
     model = XGBClassifier(
         objective='multi:softprob',
         num_class=3,
@@ -160,19 +167,34 @@ def train_model():
         random_state=42
     )
     
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_h2h_train)
     
-    # Evaluate
+    # Evaluate H2H
     y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    print(f"Model Accuracy: {acc:.4f}")
-    print("Classification Report:")
-    print(classification_report(y_test, y_pred, target_names=['Home (0)', 'Draw (1)', 'Away (2)']))
+    acc = accuracy_score(y_h2h_test, y_pred)
+    print(f"H2H Model Accuracy: {acc:.4f}")
+    
+    print("Training XGBoost BTTS Classifier...")
+    model_btts = XGBClassifier(
+        objective='binary:logistic',
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42
+    )
+    
+    model_btts.fit(X_train, y_btts_train)
+    btts_pred = model_btts.predict(X_test)
+    acc_btts = accuracy_score(y_btts_test, btts_pred)
+    print(f"BTTS Model Accuracy: {acc_btts:.4f}")
     
     # Save model and team states
     joblib.dump(model, MODEL_PATH)
+    joblib.dump(model_btts, 'model_btts.joblib')
     joblib.dump(team_states, STATE_PATH)
-    print(f"Model and states saved successfully to {MODEL_PATH} and {STATE_PATH}")
+    print(f"Models and states saved successfully to {MODEL_PATH}, model_btts.joblib and {STATE_PATH}")
 
 if __name__ == "__main__":
     train_model()
