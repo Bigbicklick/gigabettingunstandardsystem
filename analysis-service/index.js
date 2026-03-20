@@ -43,10 +43,11 @@ async function analyzeUpcomingMatches() {
   const client = await pool.connect();
   
   try {
-    // Select matches that have not started, have odds, and haven't been evaluated/sent
+    // Select matches that haven't started, are playing in the next 24h, have odds, and haven't been evaluated/sent
     const res = await client.query(`
       SELECT * FROM matches 
       WHERE date > NOW() 
+      AND date < NOW() + INTERVAL '24 hours'
       AND sent_to_discord = false 
       AND odds_home IS NOT NULL
       AND status IN ('NS', 'TBD');
