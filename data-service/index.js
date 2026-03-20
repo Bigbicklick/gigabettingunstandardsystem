@@ -39,50 +39,58 @@ async function initDB() {
 
 async function fetchUpcomingMatches() {
   console.log('Fetching upcoming matches from API-Football...');
-  const date = new Date().toISOString().split('T')[0];
+  const dates = [0, 1, 2, 3].map(days => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
+  });
+  
   try {
     // Top 5 leagues
     const leagues = [39, 140, 135, 78, 61]; 
+    const season = new Date().getMonth() < 7 ? new Date().getFullYear() - 1 : new Date().getFullYear();
     
-    for (const league of leagues) {
-      const response = await axios.get(`https://v3.football.api-sports.io/fixtures`, {
-        headers: { 'x-apisports-key': API_KEY },
-        params: { date, league, season: new Date().getFullYear() }
-      });
-      
-      const fixtures = response.data.response || [];
-      console.log(`Found ${fixtures.length} fixtures for league ${league}`);
-      
-      for (const f of fixtures) {
-        // Fetch odds for this fixture
-        let oddsHome = null, oddsDraw = null, oddsAway = null;
-        try {
-          const oddsRes = await axios.get(`https://v3.football.api-sports.io/odds`, {
-            headers: { 'x-apisports-key': API_KEY },
-            params: { fixture: f.fixture.id, bookmaker: 8 } // Bet365
-          });
-          const oddsData = oddsRes.data.response[0]?.bookmakers[0]?.bets.find(b => b.name === 'Match Winner')?.values;
-          if (oddsData) {
-            oddsHome = oddsData.find(v => v.value === 'Home')?.odd || null;
-            oddsDraw = oddsData.find(v => v.value === 'Draw')?.odd || null;
-            oddsAway = oddsData.find(v => v.value === 'Away')?.odd || null;
+    for (const date of dates) {
+      for (const league of leagues) {
+        const response = await axios.get(`https://v3.football.api-sports.io/fixtures`, {
+          headers: { 'x-apisports-key': API_KEY },
+          params: { date, league, season }
+        });
+        
+        const fixtures = response.data.response || [];
+        console.log(`Found ${fixtures.length} fixtures for league ${league} on ${date}`);
+        
+        for (const f of fixtures) {
+          // Fetch odds for this fixture
+          let oddsHome = null, oddsDraw = null, oddsAway = null;
+          try {
+            const oddsRes = await axios.get(`https://v3.football.api-sports.io/odds`, {
+              headers: { 'x-apisports-key': API_KEY },
+              params: { fixture: f.fixture.id, bookmaker: 8 } // Bet365
+            });
+            const oddsData = oddsRes.data.response[0]?.bookmakers[0]?.bets.find(b => b.name === 'Match Winner')?.values;
+            if (oddsData) {
+              oddsHome = oddsData.find(v => v.value === 'Home')?.odd || null;
+              oddsDraw = oddsData.find(v => v.value === 'Draw')?.odd || null;
+              oddsAway = oddsData.find(v => v.value === 'Away')?.odd || null;
+            }
+          } catch (e) {
+            console.error(`Could not fetch odds for fixture ${f.fixture.id}`);
           }
-        } catch (e) {
-          console.error(`Could not fetch odds for fixture ${f.fixture.id}`);
-        }
 
-        await pool.query(`
-          INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          ON CONFLICT (fixture_id) DO UPDATE 
-          SET odds_home = EXCLUDED.odds_home, 
-              odds_draw = EXCLUDED.odds_draw, 
-              odds_away = EXCLUDED.odds_away,
-              status = EXCLUDED.status;
-        `, [
-          f.fixture.id, f.league.name, f.teams.home.name, f.teams.away.name, 
-          f.fixture.date, f.fixture.status.short, oddsHome, oddsDraw, oddsAway
-        ]);
+          await pool.query(`
+            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (fixture_id) DO UPDATE 
+            SET odds_home = EXCLUDED.odds_home, 
+                odds_draw = EXCLUDED.odds_draw, 
+                odds_away = EXCLUDED.odds_away,
+                status = EXCLUDED.status;
+          `, [
+            f.fixture.id, f.league.name, f.teams.home.name, f.teams.away.name, 
+            f.fixture.date, f.fixture.status.short, oddsHome, oddsDraw, oddsAway
+          ]);
+        }
       }
     }
     console.log('Successfully saved matches to DB.');
