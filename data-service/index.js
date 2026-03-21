@@ -89,6 +89,8 @@ async function fetchUpcomingMatches() {
           let oddsBttsYes = null, oddsBttsNo = null;
           let oddsOuOver = null, oddsOuUnder = null;
           let oddsCornersOver = null, oddsCornersUnder = null;
+          let oddsDc1X = null, oddsDcX2 = null, oddsDc12 = null;
+          let oddsDnbHome = null, oddsDnbAway = null;
           
           for (const bookmaker of bookmakers) {
             if (bookmaker && bookmaker.bets) {
@@ -116,13 +118,26 @@ async function fetchUpcomingMatches() {
                 oddsCornersOver = corners.values.find(v => v.value === 'Over 9.5' || v.value === 'Over 9.50' || v.value === 'Over 9')?.odd || null;
                 oddsCornersUnder = corners.values.find(v => v.value === 'Under 9.5' || v.value === 'Under 9.50' || v.value === 'Under 9')?.odd || null;
               }
+              
+              const dc = bookmaker.bets.find(b => b.id === 12 || b.name === 'Double Chance');
+              if (dc && !oddsDc1X) {
+                oddsDc1X = dc.values.find(v => v.value === 'Home/Draw' || v.value === '1X')?.odd || null;
+                oddsDcX2 = dc.values.find(v => v.value === 'Draw/Away' || v.value === 'X2')?.odd || null;
+                oddsDc12 = dc.values.find(v => v.value === 'Home/Away' || v.value === '12')?.odd || null;
+              }
+
+              const dnb = bookmaker.bets.find(b => b.id === 53 || b.name === 'Draw No Bet' || b.name === 'Draw no bet');
+              if (dnb && !oddsDnbHome) {
+                oddsDnbHome = dnb.values.find(v => v.value === 'Home')?.odd || null;
+                oddsDnbAway = dnb.values.find(v => v.value === 'Away')?.odd || null;
+              }
             }
           }
           
           // Save or Update
           await client.query(`
-            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under, odds_dc_1x, odds_dc_x2, odds_dc_12, odds_dnb_home, odds_dnb_away)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             ON CONFLICT (fixture_id) DO UPDATE 
             SET odds_home = EXCLUDED.odds_home, 
                 odds_draw = EXCLUDED.odds_draw, 
@@ -133,6 +148,11 @@ async function fetchUpcomingMatches() {
                 odds_ou_under = EXCLUDED.odds_ou_under,
                 odds_corners_over = EXCLUDED.odds_corners_over,
                 odds_corners_under = EXCLUDED.odds_corners_under,
+                odds_dc_1x = EXCLUDED.odds_dc_1x,
+                odds_dc_x2 = EXCLUDED.odds_dc_x2,
+                odds_dc_12 = EXCLUDED.odds_dc_12,
+                odds_dnb_home = EXCLUDED.odds_dnb_home,
+                odds_dnb_away = EXCLUDED.odds_dnb_away,
                 date = EXCLUDED.date;
           `, [
             `fb_${match.fixture.id}`, 
@@ -141,7 +161,7 @@ async function fetchUpcomingMatches() {
             match.teams.away.name, 
             match.fixture.date, 
             match.fixture.status.short, 
-            oddsHome, oddsDraw, oddsAway, oddsBttsYes, oddsBttsNo, oddsOuOver, oddsOuUnder, oddsCornersOver, oddsCornersUnder
+            oddsHome, oddsDraw, oddsAway, oddsBttsYes, oddsBttsNo, oddsOuOver, oddsOuUnder, oddsCornersOver, oddsCornersUnder, oddsDc1X, oddsDcX2, oddsDc12, oddsDnbHome, oddsDnbAway
           ]);
         } catch (oddsErr) {
            console.error('Failed fetching odds for fixture:', match.fixture.id);
