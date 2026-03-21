@@ -48,7 +48,8 @@ discordClient.on('messageCreate', async (message) => {
              report += `**${m.home_team} vs ${m.away_team}**\n`;
              report += `> Zwycięzca: ${m.ai_forecast} (Przewaga nad rynkiem: ${m.ai_edge}%)\n`;
              report += `> Gole O/U: ${m.ai_ou_forecast || 'BrakDanych'} (Przewaga nad rynkiem: ${m.ai_ou_edge || 0}%)\n`;
-             report += `> *(Rynki BTTS/Corners za Paywallem)*\n\n`;
+             report += `> Obie Strzelą (BTTS): ${m.ai_btts_forecast || 'BrakDanych'} (Przewaga nad rynkiem: ${m.ai_btts_edge || 0}%)\n`;
+             report += `> Rzuty Rożne (Corners): ${m.ai_corners_forecast || 'BrakDanych'} (Przewaga nad rynkiem: ${m.ai_corners_edge || 0}%)\n\n`;
              count++;
           }
         }
