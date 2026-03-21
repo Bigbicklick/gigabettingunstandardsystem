@@ -31,7 +31,7 @@ discordClient.on('messageCreate', async (message) => {
      const pgClient = await pool.connect();
      try {
         const res = await pgClient.query(`
-          SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge
+          SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
           FROM matches 
           WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
           AND ai_forecast IS NOT NULL
@@ -49,6 +49,8 @@ discordClient.on('messageCreate', async (message) => {
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
              chunk += `> Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
+             chunk += `> Podwójna Szansa (DC): ${m.ai_dc_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_dc_edge)})\n`;
+             chunk += `> Remis Nie Ma Zakładu (DNB): ${m.ai_dnb_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_dnb_edge)})\n`;
              chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_ou_edge)})\n`;
              chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_btts_edge)})\n`;
              chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_corners_edge)})\n\n`;
@@ -111,7 +113,12 @@ async function analyzeUpcomingMatches() {
           odds_ou_over: match.odds_ou_over ? parseFloat(match.odds_ou_over) : null,
           odds_ou_under: match.odds_ou_under ? parseFloat(match.odds_ou_under) : null,
           odds_corners_over: match.odds_corners_over ? parseFloat(match.odds_corners_over) : null,
-          odds_corners_under: match.odds_corners_under ? parseFloat(match.odds_corners_under) : null
+          odds_corners_under: match.odds_corners_under ? parseFloat(match.odds_corners_under) : null,
+          odds_dc_1x: match.odds_dc_1x ? parseFloat(match.odds_dc_1x) : null,
+          odds_dc_x2: match.odds_dc_x2 ? parseFloat(match.odds_dc_x2) : null,
+          odds_dc_12: match.odds_dc_12 ? parseFloat(match.odds_dc_12) : null,
+          odds_dnb_home: match.odds_dnb_home ? parseFloat(match.odds_dnb_home) : null,
+          odds_dnb_away: match.odds_dnb_away ? parseFloat(match.odds_dnb_away) : null
         });
         
         const prediction = aiResponse.data;
@@ -119,6 +126,8 @@ async function analyzeUpcomingMatches() {
         const btts = prediction.btts_value_bet;
         const ou = prediction.ou_value_bet;
         const cor = prediction.corners_value_bet;
+        const dc = prediction.dc_value_bet;
+        const dnb = prediction.dnb_value_bet;
         const timeStr = new Date(match.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
         
         // H2H Signal
@@ -181,6 +190,36 @@ async function analyzeUpcomingMatches() {
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgCor.trim() });
         }
         
+        // Double Chance Signal
+        if (dc && dc.is_value && dc.edge_percent > 3.0) {
+          const msgDc = `
+🛡️ **GIGA SIGNAL: DOUBLE CHANCE (Bezpieczny Rynek)** 🛡️
+⚽ **MATCH**: ${match.home_team} vs ${match.away_team}
+⏰ **TIME**: ${timeStr}
+📉 **PREDICTION**: ${dc.recommended_bet}
+💰 **MIN ODDS**: ${dc.bookmaker_odds}
+📈 **MODEL PROBABILITY**: ${dc.model_probability}%
+✅ **VALUE BET EDGE**: ${dc.edge_percent}%
+🧠 **CONFIDENCE**: ${dc.confidence_score}/10
+💸 **SUGGESTED STAKE**: ${dc.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+          if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgDc.trim() });
+        }
+        
+        // Draw No Bet Signal
+        if (dnb && dnb.is_value && dnb.edge_percent > 3.0) {
+          const msgDnb = `
+⚖️ **GIGA SIGNAL: DRAW NO BET (Zwrot przy remisie)** ⚖️
+⚽ **MATCH**: ${match.home_team} vs ${match.away_team}
+⏰ **TIME**: ${timeStr}
+📉 **PREDICTION**: ${dnb.recommended_bet}
+💰 **MIN ODDS**: ${dnb.bookmaker_odds}
+📈 **MODEL PROBABILITY**: ${dnb.model_probability}%
+✅ **VALUE BET EDGE**: ${dnb.edge_percent}%
+🧠 **CONFIDENCE**: ${dnb.confidence_score}/10
+💸 **SUGGESTED STAKE**: ${dnb.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+          if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgDnb.trim() });
+        }
+        
         // Mark as sent so we don't query it again endlessly
         await client.query(`
           UPDATE matches 
@@ -192,8 +231,12 @@ async function analyzeUpcomingMatches() {
               ai_ou_forecast = $5,
               ai_ou_edge = $6,
               ai_corners_forecast = $7,
-              ai_corners_edge = $8
-          WHERE fixture_id = $9
+              ai_corners_edge = $8,
+              ai_dc_forecast = $9,
+              ai_dc_edge = $10,
+              ai_dnb_forecast = $11,
+              ai_dnb_edge = $12
+          WHERE fixture_id = $13
         `, [
           prediction.most_likely_outcome, 
           h2h ? h2h.edge_percent : null, 
@@ -203,6 +246,10 @@ async function analyzeUpcomingMatches() {
           ou ? ou.edge_percent : null,
           cor ? cor.recommended_bet : null,
           cor ? cor.edge_percent : null,
+          dc ? dc.recommended_bet : null,
+          dc ? dc.edge_percent : null,
+          dnb ? dnb.recommended_bet : null,
+          dnb ? dnb.edge_percent : null,
           match.fixture_id
         ]);
         
@@ -230,7 +277,7 @@ async function sendHourlyReport() {
   const client = await pool.connect();
   try {
     const res = await client.query(`
-      SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge
+      SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
       FROM matches 
       WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
       AND ai_forecast IS NOT NULL
@@ -249,6 +296,8 @@ async function sendHourlyReport() {
          
          report += `⚽ **${m.home_team} vs ${m.away_team}**\n`;
          report += `   ├─ Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
+         report += `   ├─ Podwójna Szansa (DC): ${m.ai_dc_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_dc_edge)})\n`;
+         report += `   ├─ Remis Nie Ma Zakładu (DNB): ${m.ai_dnb_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_dnb_edge)})\n`;
          report += `   ├─ O.D. Strzelą: ${m.ai_btts_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_btts_edge)})\n`;
          report += `   ├─ Liczba Goli: ${m.ai_ou_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_ou_edge)})\n`;
          report += `   └─ Rzuty Rożne: ${m.ai_corners_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_corners_edge)})\n\n`;
