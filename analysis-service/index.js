@@ -21,11 +21,13 @@ discordClient.on('ready', () => {
   console.log(`Discord Bot logged in as ${discordClient.user.tag}!`);
 });
 
+console.log('Checking DISCORD_BOT_TOKEN status: ', DISCORD_BOT_TOKEN ? 'PROVIDED' : 'MISSING');
+
 discordClient.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  if (message.content === '!bets') {
-     console.log('Received !bets command');
+  if (message.content === 'bets') {
+     console.log('Received bets command');
      const pgClient = await pool.connect();
      try {
         const res = await pgClient.query(`
