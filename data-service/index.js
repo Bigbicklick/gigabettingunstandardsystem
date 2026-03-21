@@ -56,7 +56,7 @@ async function fetchUpcomingMatches() {
           params: {
             apiKey: API_KEY,
             regions: 'eu,uk', // bet365, pinnacle etc
-            markets: 'h2h,btts,totals,alternate_totals_corners',
+            markets: 'h2h,totals',
             oddsFormat: 'decimal'
           }
         });
