@@ -45,11 +45,13 @@ discordClient.on('messageCreate', async (message) => {
         const payloads = [];
         
         for (const m of res.rows) {
+             const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}%`;
+
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
-             chunk += `> Zwycięzca: ${m.ai_forecast} (Edge: ${m.ai_edge}%)\n`;
-             chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} (Edge: ${m.ai_ou_edge || 0}%)\n`;
-             chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} (Edge: ${m.ai_btts_edge || 0}%)\n`;
-             chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} (Edge: ${m.ai_corners_edge || 0}%)\n\n`;
+             chunk += `> Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
+             chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_ou_edge)})\n`;
+             chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_btts_edge)})\n`;
+             chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_corners_edge)})\n\n`;
              
              if (currentReport.length + chunk.length > 1900) {
                  payloads.push(currentReport);
@@ -243,11 +245,13 @@ async function sendHourlyReport() {
     let count = 0;
     for (const m of res.rows) {
       if (count < 10) {
+         const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}%`;
+         
          report += `⚽ **${m.home_team} vs ${m.away_team}**\n`;
-         report += `   ├─ Zwycięzca: ${m.ai_forecast} (Edge: ${m.ai_edge}%)\n`;
-         report += `   ├─ O.D. Strzelą: ${m.ai_btts_forecast || 'N/A'} (Edge: ${m.ai_btts_edge || 0}%)\n`;
-         report += `   ├─ Liczba Goli: ${m.ai_ou_forecast || 'N/A'} (Edge: ${m.ai_ou_edge || 0}%)\n`;
-         report += `   └─ Rzuty Rożne: ${m.ai_corners_forecast || 'N/A'} (Edge: ${m.ai_corners_edge || 0}%)\n\n`;
+         report += `   ├─ Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
+         report += `   ├─ O.D. Strzelą: ${m.ai_btts_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_btts_edge)})\n`;
+         report += `   ├─ Liczba Goli: ${m.ai_ou_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_ou_edge)})\n`;
+         report += `   └─ Rzuty Rożne: ${m.ai_corners_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_corners_edge)})\n\n`;
          count++;
       }
     }
