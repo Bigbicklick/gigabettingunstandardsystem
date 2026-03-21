@@ -33,6 +33,11 @@ class PredictionRequest(BaseModel):
     odds_ou_under: Optional[float] = None
     odds_corners_over: Optional[float] = None
     odds_corners_under: Optional[float] = None
+    odds_dc_1x: Optional[float] = None
+    odds_dc_x2: Optional[float] = None
+    odds_dc_12: Optional[float] = None
+    odds_dnb_home: Optional[float] = None
+    odds_dnb_away: Optional[float] = None
 
 def load_ai():
     global model, model_btts, model_ou, model_corners, team_states
@@ -68,14 +73,26 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     if home not in team_states or away not in team_states:
         raise HTTPException(status_code=404, detail="Team history not found in database. Cannot predict.")
         
-    h_pts, h_gs, h_gc, h_streak = team_states[home].get_features()
-    a_pts, a_gs, a_gc, a_streak = team_states[away].get_features()
+    h_pts, h_gs, h_gc, h_streak, h_games = team_states[home].get_features()
+    a_pts, a_gs, a_gc, a_streak, a_games = team_states[away].get_features()
+    
+    if h_games < 1: h_games = 1
+    if a_games < 1: a_games = 1
+    
+    h_attack = h_gs / h_games
+    h_defense = h_gc / h_games
+    a_attack = a_gs / a_games
+    a_defense = a_gc / a_games
     
     feature_row = [
         h_pts, h_gs, h_gc, h_streak,
         a_pts, a_gs, a_gc, a_streak,
-        h_pts - a_pts,
-        (h_gs - h_gc) - (a_gs - a_gc)
+        h_pts - a_pts,  # Points diff
+        (h_gs - h_gc) - (a_gs - a_gc), # GD diff
+        h_attack, h_defense,
+        a_attack, a_defense,
+        h_attack - a_defense, # Home pressure
+        a_attack - h_defense  # Away pressure
     ]
     
     # Model predictions
@@ -254,6 +271,79 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             if kf > 0:
                 cor_recommended_stake = round((kf * 0.25) * 100, 2)
 
+    dc_value_bet = False
+    dc_best_bet = None
+    dc_highest_edge = -100.0
+    dc_model_prob = 0.0
+    dc_bookie_odds = 0.0
+    
+    if req.odds_dc_1x and req.odds_dc_x2 and req.odds_dc_12:
+        i_1x = calculate_implied_prob(req.odds_dc_1x)
+        i_x2 = calculate_implied_prob(req.odds_dc_x2)
+        i_12 = calculate_implied_prob(req.odds_dc_12)
+        
+        edges_dc = {
+            "1X": ((p_home + p_draw) - i_1x, p_home + p_draw, req.odds_dc_1x),
+            "X2": ((p_away + p_draw) - i_x2, p_away + p_draw, req.odds_dc_x2),
+            "12": ((p_home + p_away) - i_12, p_home + p_away, req.odds_dc_12)
+        }
+        
+        for k, (edge, m_prob, _odds) in edges_dc.items():
+            if edge > dc_highest_edge:
+                dc_highest_edge = edge
+                dc_best_bet = k
+                dc_model_prob = m_prob
+                dc_bookie_odds = _odds
+                
+        if dc_highest_edge > 0.05:
+            dc_value_bet = True
+
+    dc_recommended_stake = 0.0
+    if dc_value_bet and dc_best_bet:
+        b = dc_bookie_odds - 1.0
+        p = dc_model_prob
+        if b > 0:
+            kf = (p * b - (1.0 - p)) / b
+            if kf > 0:
+                dc_recommended_stake = round((kf * 0.25) * 100, 2)
+
+    dnb_value_bet = False
+    dnb_best_bet = None
+    dnb_highest_edge = -100.0
+    dnb_model_prob = 0.0
+    dnb_bookie_odds = 0.0
+    
+    if req.odds_dnb_home and req.odds_dnb_away and p_draw < 1.0:
+        p_dnb_home = p_home / (1.0 - p_draw)
+        p_dnb_away = p_away / (1.0 - p_draw)
+        
+        i_dnb_home = calculate_implied_prob(req.odds_dnb_home)
+        i_dnb_away = calculate_implied_prob(req.odds_dnb_away)
+        
+        edges_dnb = {
+            "Home": (p_dnb_home - i_dnb_home, p_dnb_home, req.odds_dnb_home),
+            "Away": (p_dnb_away - i_dnb_away, p_dnb_away, req.odds_dnb_away)
+        }
+        
+        for k, (edge, m_prob, _odds) in edges_dnb.items():
+            if edge > dnb_highest_edge:
+                dnb_highest_edge = edge
+                dnb_best_bet = k
+                dnb_model_prob = m_prob
+                dnb_bookie_odds = _odds
+                
+        if dnb_highest_edge > 0.05:
+            dnb_value_bet = True
+
+    dnb_recommended_stake = 0.0
+    if dnb_value_bet and dnb_best_bet:
+        b = dnb_bookie_odds - 1.0
+        p = dnb_model_prob
+        if b > 0:
+            kf = (p * b - (1.0 - p)) / b
+            if kf > 0:
+                dnb_recommended_stake = round((kf * 0.25) * 100, 2)
+
     confidence_score = float(max(p_home, p_draw, p_away) * 10) # 0 to 10
     
     return {
@@ -301,6 +391,24 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             "bookmaker_odds": cor_bookie_odds,
             "confidence_score": round(confidence_score, 1),
             "recommended_stake_percentage": cor_recommended_stake
+        },
+        "dc_value_bet": {
+            "is_value": dc_value_bet,
+            "recommended_bet": dc_best_bet,
+            "edge_percent": round(dc_highest_edge * 100, 2),
+            "model_probability": round(dc_model_prob * 100, 2),
+            "bookmaker_odds": dc_bookie_odds,
+            "confidence_score": round(confidence_score, 1),
+            "recommended_stake_percentage": dc_recommended_stake
+        },
+        "dnb_value_bet": {
+            "is_value": dnb_value_bet,
+            "recommended_bet": dnb_best_bet,
+            "edge_percent": round(dnb_highest_edge * 100, 2),
+            "model_probability": round(dnb_model_prob * 100, 2),
+            "bookmaker_odds": dnb_bookie_odds,
+            "confidence_score": round(confidence_score, 1),
+            "recommended_stake_percentage": dnb_recommended_stake
         }
     }
 

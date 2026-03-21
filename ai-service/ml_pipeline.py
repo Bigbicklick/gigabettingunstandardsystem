@@ -5,6 +5,10 @@ import io
 import os
 import joblib
 from xgboost import XGBClassifier
+from sklearn.ensemble import VotingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import warnings
@@ -13,11 +17,10 @@ warnings.filterwarnings('ignore')
 MODEL_PATH = "model.joblib"
 STATE_PATH = "team_states.joblib"
 
-# We will fetch Premier League (E0) data for the last few seasons from football-data.co.uk
 SEASONS = [
     "1819", "1920", "2021", "2122", "2223", "2324"
 ]
-LEAGUES = ["E0", "E1", "SP1", "D1", "I1", "F1"] # Top European Leagues
+LEAGUES = ["E0", "E1", "SP1", "D1", "I1", "F1"]
 
 def download_data():
     """Downloads real historical match data from football-data.co.uk"""
@@ -38,13 +41,9 @@ def download_data():
         raise Exception("No data could be downloaded. Check internet connection.")
         
     data = pd.concat(dfs, ignore_index=True)
-    
-    # Clean up empty rows
     data = data.dropna(subset=['HomeTeam', 'AwayTeam', 'FTR'])
     
-    # We only need specific columns
     cols_to_keep = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR', 'HC', 'AC']
-    # If odds exist, we can use them for reference, but our model predicts outcome from stats
     data = data.dropna(subset=cols_to_keep)
     data = data[cols_to_keep]
     data['Date'] = pd.to_datetime(data['Date'], errors='coerce', dayfirst=True)
@@ -56,14 +55,13 @@ class TeamState:
         self.goals_scored = []
         self.goals_conceded = []
         self.points = []
-        self.streak = 0  # + for wins, - for losses
+        self.streak = 0
 
     def update(self, gs, gc, pts):
         self.goals_scored.append(gs)
         self.goals_conceded.append(gc)
         self.points.append(pts)
         
-        # Keep only last 5
         if len(self.goals_scored) > 5:
             self.goals_scored.pop(0)
             self.goals_conceded.pop(0)
@@ -78,12 +76,13 @@ class TeamState:
             
     def get_features(self):
         if len(self.points) == 0:
-            return 0.0, 0.0, 0.0, 0
+            return 0.0, 0.0, 0.0, 0, 0
         return (
             sum(self.points),
             sum(self.goals_scored),
             sum(self.goals_conceded),
-            self.streak
+            self.streak,
+            len(self.points)
         )
 
 def feature_engineering(data):
@@ -95,11 +94,7 @@ def feature_engineering(data):
     labels_ou = []
     labels_corners = []
     
-    # Dictionary to keep track of team states
     team_states = {}
-    
-    # Mapping FTR (Full Time Result) to numerical targets
-    # 0 = Home Win, 1 = Draw, 2 = Away Win
     label_map = {'H': 0, 'D': 1, 'A': 2}
     
     for idx, row in data.iterrows():
@@ -114,34 +109,37 @@ def feature_engineering(data):
         if away not in team_states:
             team_states[away] = TeamState()
             
-        # Get current features BEFORE the match
-        h_pts, h_gs, h_gc, h_streak = team_states[home].get_features()
-        a_pts, a_gs, a_gc, a_streak = team_states[away].get_features()
+        h_pts, h_gs, h_gc, h_streak, h_games = team_states[home].get_features()
+        a_pts, a_gs, a_gc, a_streak, a_games = team_states[away].get_features()
         
-        # We only use rows where both teams have played at least 5 games for training
-        if len(team_states[home].points) >= 5 and len(team_states[away].points) >= 5:
+        if h_games >= 5 and a_games >= 5:
+            h_attack = h_gs / h_games
+            h_defense = h_gc / h_games
+            a_attack = a_gs / a_games
+            a_defense = a_gc / a_games
+            
             feature_row = [
                 h_pts, h_gs, h_gc, h_streak,
                 a_pts, a_gs, a_gc, a_streak,
                 h_pts - a_pts,  # Points diff
-                (h_gs - h_gc) - (a_gs - a_gc) # GD diff
+                (h_gs - h_gc) - (a_gs - a_gc), # GD diff
+                h_attack, h_defense,
+                a_attack, a_defense,
+                h_attack - a_defense, # Home pressure
+                a_attack - h_defense  # Away pressure
             ]
             features.append(feature_row)
             labels_h2h.append(label_map[ftr])
             
-            # BTTS mapping: 1 if both scored, 0 otherwise
             btts_val = 1 if row['FTHG'] > 0 and row['FTAG'] > 0 else 0
             labels_btts.append(btts_val)
             
-            # Over/Under 2.5 Goals
             ou_val = 1 if (row['FTHG'] + row['FTAG']) > 2.5 else 0
             labels_ou.append(ou_val)
             
-            # Corners > 9.5
             corners_val = 1 if (row['HC'] + row['AC']) > 9.5 else 0
             labels_corners.append(corners_val)
             
-        # Update team states AFTER the match
         if ftr == 'H':
             team_states[home].update(row['FTHG'], row['FTAG'], 3)
             team_states[away].update(row['FTAG'], row['FTHG'], 0)
@@ -160,7 +158,7 @@ def feature_engineering(data):
     return X, y_h2h, y_btts, y_ou, y_corners, team_states
 
 def train_model():
-    """Builds and trains the ML model pipeline."""
+    """Builds and trains the Ensemble pipeline."""
     data = download_data()
     X, y_h2h, y_btts, y_ou, y_corners, team_states = feature_engineering(data)
     
@@ -169,70 +167,32 @@ def train_model():
         X, y_h2h, y_btts, y_ou, y_corners, test_size=0.1, random_state=42
     )
     
-    print("Training XGBoost H2H Classifier...")
-    model = XGBClassifier(
-        objective='multi:softprob',
-        num_class=3,
-        n_estimators=150,
-        max_depth=4,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
-    )
+    # Base Estimators
+    xgb_multi = XGBClassifier(objective='multi:softprob', num_class=3, n_estimators=100, max_depth=4, learning_rate=0.05, random_state=42)
+    xgb_bin = XGBClassifier(objective='binary:logistic', n_estimators=100, max_depth=4, learning_rate=0.05, random_state=42)
+    rf_base = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+    lr_base = Pipeline([('scaler', StandardScaler()), ('lr', LogisticRegression(max_iter=1000, random_state=42))])
     
+    print("Training Ensemble H2H Classifier...")
+    model = VotingClassifier(estimators=[('xgb', xgb_multi), ('rf', rf_base), ('lr', lr_base)], voting='soft')
     model.fit(X_train, y_h2h_train)
-    
-    # Evaluate H2H
     y_pred = model.predict(X_test)
-    acc = accuracy_score(y_h2h_test, y_pred)
-    print(f"H2H Model Accuracy: {acc:.4f}")
+    print(f"H2H Model Accuracy: {accuracy_score(y_h2h_test, y_pred):.4f}")
     
-    print("Training XGBoost BTTS Classifier...")
-    model_btts = XGBClassifier(
-        objective='binary:logistic',
-        n_estimators=100,
-        max_depth=4,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
-    )
-    
+    print("Training Ensemble BTTS Classifier...")
+    model_btts = VotingClassifier(estimators=[('xgb', xgb_bin), ('rf', rf_base), ('lr', lr_base)], voting='soft')
     model_btts.fit(X_train, y_btts_train)
-    btts_pred = model_btts.predict(X_test)
-    acc_btts = accuracy_score(y_btts_test, btts_pred)
-    print(f"BTTS Model Accuracy: {acc_btts:.4f}")
+    print(f"BTTS Model Accuracy: {accuracy_score(y_btts_test, model_btts.predict(X_test)):.4f}")
     
-    print("Training XGBoost Over/Under 2.5 Classifier...")
-    model_ou = XGBClassifier(
-        objective='binary:logistic',
-        n_estimators=100,
-        max_depth=4,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
-    )
+    print("Training Ensemble Over/Under 2.5 Classifier...")
+    model_ou = VotingClassifier(estimators=[('xgb', xgb_bin), ('rf', rf_base), ('lr', lr_base)], voting='soft')
     model_ou.fit(X_train, y_ou_train)
-    ou_pred = model_ou.predict(X_test)
-    acc_ou = accuracy_score(y_ou_test, ou_pred)
-    print(f"Over/Under Model Accuracy: {acc_ou:.4f}")
+    print(f"Over/Under Model Accuracy: {accuracy_score(y_ou_test, model_ou.predict(X_test)):.4f}")
 
-    print("Training XGBoost Corners >9.5 Classifier...")
-    model_corners = XGBClassifier(
-        objective='binary:logistic',
-        n_estimators=100,
-        max_depth=4,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
-    )
+    print("Training Ensemble Corners >9.5 Classifier...")
+    model_corners = VotingClassifier(estimators=[('xgb', xgb_bin), ('rf', rf_base), ('lr', lr_base)], voting='soft')
     model_corners.fit(X_train, y_cor_train)
-    cor_pred = model_corners.predict(X_test)
-    acc_cor = accuracy_score(y_cor_test, cor_pred)
-    print(f"Corners Model Accuracy: {acc_cor:.4f}")
+    print(f"Corners Model Accuracy: {accuracy_score(y_cor_test, model_corners.predict(X_test)):.4f}")
     
     # Save model and team states
     joblib.dump(model, MODEL_PATH)
@@ -240,7 +200,7 @@ def train_model():
     joblib.dump(model_ou, 'model_ou.joblib')
     joblib.dump(model_corners, 'model_corners.joblib')
     joblib.dump(team_states, STATE_PATH)
-    print(f"All 4 models and states saved successfully to {STATE_PATH}")
+    print(f"All 4 Ensemble models and states saved successfully to {STATE_PATH}")
 
 if __name__ == "__main__":
     train_model()
