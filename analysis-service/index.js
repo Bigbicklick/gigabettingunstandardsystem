@@ -2,10 +2,63 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const axios = require('axios');
 const cron = require('node-cron');
+const { Client, GatewayIntentBits } = require('discord.js');
 
-const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://ai-service:8000';
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
+
+const discordClient = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ]
+});
+
+discordClient.on('ready', () => {
+  console.log(`Discord Bot logged in as ${discordClient.user.tag}!`);
+});
+
+discordClient.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+
+  if (message.content === '!bets') {
+     console.log('Received !bets command');
+     const pgClient = await pool.connect();
+     try {
+        const res = await pgClient.query(`
+          SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge
+          FROM matches 
+          WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
+          AND ai_forecast IS NOT NULL
+        `);
+        
+        if (res.rows.length === 0) {
+          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma żadnych zbuforowanych meczów na najbliższe 24h z Free Tierowym Edge'm.");
+        }
+        
+        let report = "⚽ **AKTUALNE SKANOWANIE RYNKÓW NA ŻYCZENIE SZEFA** ⚽\n\n";
+        let count = 0;
+        for (const m of res.rows) {
+          if (count < 10) {
+             report += `**${m.home_team} vs ${m.away_team}**\n`;
+             report += `> Zwycięzca: ${m.ai_forecast} (Przewaga nad rynkiem: ${m.ai_edge}%)\n`;
+             report += `> Gole O/U: ${m.ai_ou_forecast || 'BrakDanych'} (Przewaga nad rynkiem: ${m.ai_ou_edge || 0}%)\n`;
+             report += `> *(Rynki BTTS/Corners za Paywallem)*\n\n`;
+             count++;
+          }
+        }
+        return message.reply(report);
+     } catch(e) {
+        console.error(e);
+        return message.reply("Wystąpił błąd podczas pobierania meczów (Database I/O).");
+     } finally {
+        pgClient.release();
+     }
+  }
+});
 
 const pool = new Pool({
   connectionString: DB_URL,
