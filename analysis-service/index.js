@@ -272,3 +272,8 @@ function start() {
 }
 
 start();
+
+if (DISCORD_BOT_TOKEN) {
+  console.log('Attempting to login to Discord...');
+  discordClient.login(DISCORD_BOT_TOKEN).catch(console.error);
+}
