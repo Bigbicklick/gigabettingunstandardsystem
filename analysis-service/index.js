@@ -41,19 +41,30 @@ discordClient.on('messageCreate', async (message) => {
           return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma żadnych zbuforowanych meczów na najbliższe 24h z Free Tierowym Edge'm.");
         }
         
-        let report = "⚽ **AKTUALNE SKANOWANIE RYNKÓW NA ŻYCZENIE SZEFA** ⚽\n\n";
-        let count = 0;
+        let currentReport = "⚽ **AKTUALNE SKANOWANIE RYNKÓW NA ŻYCZENIE SZEFA** ⚽\n\n";
+        const payloads = [];
+        
         for (const m of res.rows) {
-          if (count < 10) {
-             report += `**${m.home_team} vs ${m.away_team}**\n`;
-             report += `> Zwycięzca: ${m.ai_forecast} (Przewaga nad rynkiem: ${m.ai_edge}%)\n`;
-             report += `> Gole O/U: ${m.ai_ou_forecast || 'BrakDanych'} (Przewaga nad rynkiem: ${m.ai_ou_edge || 0}%)\n`;
-             report += `> Obie Strzelą (BTTS): ${m.ai_btts_forecast || 'BrakDanych'} (Przewaga nad rynkiem: ${m.ai_btts_edge || 0}%)\n`;
-             report += `> Rzuty Rożne (Corners): ${m.ai_corners_forecast || 'BrakDanych'} (Przewaga nad rynkiem: ${m.ai_corners_edge || 0}%)\n\n`;
-             count++;
-          }
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
+             chunk += `> Zwycięzca: ${m.ai_forecast} (Edge: ${m.ai_edge}%)\n`;
+             chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} (Edge: ${m.ai_ou_edge || 0}%)\n`;
+             chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} (Edge: ${m.ai_btts_edge || 0}%)\n`;
+             chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} (Edge: ${m.ai_corners_edge || 0}%)\n\n`;
+             
+             if (currentReport.length + chunk.length > 1900) {
+                 payloads.push(currentReport);
+                 currentReport = chunk;
+             } else {
+                 currentReport += chunk;
+             }
         }
-        return message.reply(report);
+        if (currentReport.trim().length > 0) {
+             payloads.push(currentReport);
+        }
+
+        for (const payload of payloads) {
+             await message.reply(payload);
+        }
      } catch(e) {
         console.error(e);
         return message.reply("Wystąpił błąd podczas pobierania meczów (Database I/O).");
