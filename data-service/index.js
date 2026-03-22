@@ -47,6 +47,11 @@ async function fetchUpcomingMatches() {
   console.log('Connecting to API-Football to grab today fixtures...');
   
   const todayStr = new Date().toISOString().split('T')[0];
+  
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  
   const targetLeagues = [
     39, 40, 41, 42, 179, // Anglia + Szkocja
     78, 79,              // Niemcy
@@ -57,17 +62,29 @@ async function fetchUpcomingMatches() {
   ];
   
   try {
-    const fixResponse = await axios.get('https://v3.football.api-sports.io/fixtures', {
+    const fixResponseToday = await axios.get('https://v3.football.api-sports.io/fixtures', {
       params: { date: todayStr },
       headers: { 'x-apisports-key': API_KEY }
     });
     
-    if (!fixResponse.data || !fixResponse.data.response) {
-      console.log('No fixtures found from API-Football today.');
+    const fixResponseTomorrow = await axios.get('https://v3.football.api-sports.io/fixtures', {
+      params: { date: tomorrowStr },
+      headers: { 'x-apisports-key': API_KEY }
+    });
+    
+    let allMatches = [];
+    if (fixResponseToday.data && fixResponseToday.data.response) {
+       allMatches = allMatches.concat(fixResponseToday.data.response);
+    }
+    if (fixResponseTomorrow.data && fixResponseTomorrow.data.response) {
+       allMatches = allMatches.concat(fixResponseTomorrow.data.response);
+    }
+    
+    if (allMatches.length === 0) {
+      console.log('No fixtures found from API-Football today or tomorrow.');
       return;
     }
     
-    const allMatches = fixResponse.data.response;
     const premiumMatches = allMatches.filter(m => targetLeagues.includes(m.league.id) && m.fixture.status.short === 'NS');
     
     console.log(`Found ${premiumMatches.length} upcoming matches across the 18 expanded Giga Leagues.`);
