@@ -74,13 +74,22 @@ async function fetchUpcomingMatches() {
         
         try {
           requestsUsed++;
-          const oddsResponse = await axios.get('https://v3.football.api-sports.io/odds', {
-             params: { fixture: match.fixture.id },
+          let oddsResponse = await axios.get('https://v3.football.api-sports.io/odds', {
+             params: { fixture: match.fixture.id, bookmaker: 1 },
              headers: { 'x-apisports-key': API_KEY }
           });
           
           if (!oddsResponse.data || !oddsResponse.data.response || oddsResponse.data.response.length === 0) {
-             continue; // No odds printed yet
+             // Fallback to Bet365 if 1xBet doesn't have odds for this yet
+             requestsUsed++;
+             oddsResponse = await axios.get('https://v3.football.api-sports.io/odds', {
+                 params: { fixture: match.fixture.id, bookmaker: 8 },
+                 headers: { 'x-apisports-key': API_KEY }
+             });
+             
+             if (!oddsResponse.data || !oddsResponse.data.response || oddsResponse.data.response.length === 0) {
+                 continue; // Still no odds
+             }
           }
           
           const bookmakers = oddsResponse.data.response[0].bookmakers;
