@@ -47,7 +47,14 @@ async function fetchUpcomingMatches() {
   console.log('Connecting to API-Football to grab today fixtures...');
   
   const todayStr = new Date().toISOString().split('T')[0];
-  const targetLeagues = [39, 140, 135, 78, 61, 106]; // EPL, LaLiga, SerieA, Buli, Ligue1, Ekstraklasa
+  const targetLeagues = [
+    39, 40, 41, 42, 179, // Anglia + Szkocja
+    78, 79,              // Niemcy
+    135, 136,            // Wlochy
+    140, 141,            // Hiszpania
+    61, 62,              // Francja
+    88, 144, 94, 203, 197 // Holandia, Belgia, Portugalia, Turcja, Grecja
+  ];
   
   try {
     const fixResponse = await axios.get('https://v3.football.api-sports.io/fixtures', {
@@ -63,7 +70,7 @@ async function fetchUpcomingMatches() {
     const allMatches = fixResponse.data.response;
     const premiumMatches = allMatches.filter(m => targetLeagues.includes(m.league.id) && m.fixture.status.short === 'NS');
     
-    console.log(`Found ${premiumMatches.length} upcoming matches across the Top 6 watched leagues.`);
+    console.log(`Found ${premiumMatches.length} upcoming matches across the 18 expanded Giga Leagues.`);
     
     const client = await pool.connect();
     let requestsUsed = 1; // Used 1 for fixtures 

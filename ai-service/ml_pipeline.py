@@ -20,7 +20,14 @@ STATE_PATH = "team_states.joblib"
 SEASONS = [
     "1819", "1920", "2021", "2122", "2223", "2324"
 ]
-LEAGUES = ["E0", "E1", "SP1", "D1", "I1", "F1"]
+LEAGUES = [
+    "E0", "E1", "E2", "E3", "SC0", 
+    "D1", "D2", 
+    "I1", "I2", 
+    "SP1", "SP2", 
+    "F1", "F2", 
+    "N1", "B1", "P1", "T1", "G1"
+]
 
 def download_data():
     """Downloads real historical match data from football-data.co.uk"""
