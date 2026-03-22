@@ -160,7 +160,6 @@ def feature_engineering(data):
                 h_sot_attack, h_sot_defense,
                 a_sot_attack, a_sot_defense,
                 h_sot_attack - a_sot_defense,
-                h_sot_attack - a_sot_defense,
                 a_sot_attack - h_sot_defense,
                 team_states[home].elo,
                 team_states[away].elo,
