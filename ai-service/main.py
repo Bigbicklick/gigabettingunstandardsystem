@@ -73,8 +73,8 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     if home not in team_states or away not in team_states:
         raise HTTPException(status_code=404, detail="Team history not found in database. Cannot predict.")
         
-    h_pts, h_gs, h_gc, h_streak, h_games = team_states[home].get_features()
-    a_pts, a_gs, a_gc, a_streak, a_games = team_states[away].get_features()
+    h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
+    a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
     
     if h_games < 1: h_games = 1
     if a_games < 1: a_games = 1
@@ -84,6 +84,16 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     a_attack = a_gs / a_games
     a_defense = a_gc / a_games
     
+    h_shot_attack = h_sh / h_games
+    h_shot_defense = h_sh_c / h_games
+    a_shot_attack = a_sh / a_games
+    a_shot_defense = a_sh_c / a_games
+    
+    h_sot_attack = h_sot / h_games
+    h_sot_defense = h_sot_c / h_games
+    a_sot_attack = a_sot / a_games
+    a_sot_defense = a_sot_c / a_games
+    
     feature_row = [
         h_pts, h_gs, h_gc, h_streak,
         a_pts, a_gs, a_gc, a_streak,
@@ -92,7 +102,13 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         h_attack, h_defense,
         a_attack, a_defense,
         h_attack - a_defense, # Home pressure
-        a_attack - h_defense  # Away pressure
+        a_attack - h_defense, # Away pressure
+        h_shot_attack, h_shot_defense,
+        a_shot_attack, a_shot_defense,
+        h_sot_attack, h_sot_defense,
+        a_sot_attack, a_sot_defense,
+        h_sot_attack - a_sot_defense,
+        a_sot_attack - h_sot_defense
     ]
     
     # Model predictions
@@ -121,7 +137,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     
     # Prediction class
     best_idx = np.argmax(probs)
-    class_map = {0: "Home Win", 1: "Draw", 2: "Away Win"}
+    class_map = {0: home, 1: "Draw", 2: away}
     prediction_label = class_map[best_idx]
     
     # Value bet logic
@@ -137,9 +153,9 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         i_away = calculate_implied_prob(req.odds_away)
         
         edges = {
-            "Home Win": (p_home - i_home, p_home, req.odds_home),
+            home: (p_home - i_home, p_home, req.odds_home),
             "Draw": (p_draw - i_draw, p_draw, req.odds_draw),
-            "Away Win": (p_away - i_away, p_away, req.odds_away)
+            away: (p_away - i_away, p_away, req.odds_away)
         }
         
         for k, (edge, m_prob, _odds) in edges.items():
@@ -321,8 +337,8 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         i_dnb_away = calculate_implied_prob(req.odds_dnb_away)
         
         edges_dnb = {
-            "Home": (p_dnb_home - i_dnb_home, p_dnb_home, req.odds_dnb_home),
-            "Away": (p_dnb_away - i_dnb_away, p_dnb_away, req.odds_dnb_away)
+            home: (p_dnb_home - i_dnb_home, p_dnb_home, req.odds_dnb_home),
+            away: (p_dnb_away - i_dnb_away, p_dnb_away, req.odds_dnb_away)
         }
         
         for k, (edge, m_prob, _odds) in edges_dnb.items():

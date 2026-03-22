@@ -23,6 +23,12 @@ discordClient.on('ready', () => {
 
 console.log('Checking DISCORD_BOT_TOKEN status: ', DISCORD_BOT_TOKEN ? 'PROVIDED' : 'MISSING');
 
+const getEdgeAdvice = (edge) => {
+    if (!edge || edge <= 0) return "nie ma sensu wchodzić ❌";
+    if (edge < 3.0) return "możesz spróbować ale nic szalonego 🟡";
+    return "obstawiaj na to szczególnie, większe szanse 🔥";
+};
+
 discordClient.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -45,7 +51,7 @@ discordClient.on('messageCreate', async (message) => {
         const payloads = [];
         
         for (const m of res.rows) {
-             const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}%`;
+             const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}% - ${getEdgeAdvice(edge)}`;
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
              chunk += `> Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
@@ -62,6 +68,35 @@ discordClient.on('messageCreate', async (message) => {
                  currentReport += chunk;
              }
         }
+        
+        let akoCandidates = [];
+        res.rows.forEach(m => {
+            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+            if (m.ai_btts_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
+            if (m.ai_ou_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
+            if (m.ai_corners_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
+            if (m.ai_dc_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
+            if (m.ai_dnb_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dnb_forecast, edge: m.ai_dnb_edge });
+        });
+        
+        akoCandidates.sort((a, b) => b.edge - a.edge);
+        const topAko = akoCandidates.slice(0, 4);
+        
+        if (topAko.length >= 2) {
+            let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
+            topAko.forEach((c, idx) => {
+               akoText += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${c.edge}%)\n`;
+            });
+            akoText += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
+            
+            if (currentReport.length + akoText.length > 1900) {
+                payloads.push(currentReport);
+                currentReport = akoText;
+            } else {
+                currentReport += akoText;
+            }
+        }
+
         if (currentReport.trim().length > 0) {
              payloads.push(currentReport);
         }
@@ -292,7 +327,7 @@ async function sendHourlyReport() {
     let count = 0;
     for (const m of res.rows) {
       if (count < 10) {
-         const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}%`;
+         const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}% - ${getEdgeAdvice(edge)}`;
          
          report += `⚽ **${m.home_team} vs ${m.away_team}**\n`;
          report += `   ├─ Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
@@ -306,6 +341,27 @@ async function sendHourlyReport() {
     }
     if (res.rows.length > 15) {
        report += `\n...oraz ${res.rows.length - 15} innych meczów (łącznie ${res.rows.length}).`;
+    }
+    
+    let akoCandidates = [];
+    res.rows.forEach(m => {
+        if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+        if (m.ai_btts_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
+        if (m.ai_ou_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
+        if (m.ai_corners_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
+        if (m.ai_dc_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
+        if (m.ai_dnb_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dnb_forecast, edge: m.ai_dnb_edge });
+    });
+    
+    akoCandidates.sort((a, b) => b.edge - a.edge);
+    const topAko = akoCandidates.slice(0, 4);
+    
+    if (topAko.length >= 2) {
+        report += "\n\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
+        topAko.forEach((c, idx) => {
+           report += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${c.edge}%)\n`;
+        });
+        report += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
     }
     
     await axios.post(DISCORD_WEBHOOK_URL, { content: report });

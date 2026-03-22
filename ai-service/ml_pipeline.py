@@ -43,7 +43,7 @@ def download_data():
     data = pd.concat(dfs, ignore_index=True)
     data = data.dropna(subset=['HomeTeam', 'AwayTeam', 'FTR'])
     
-    cols_to_keep = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR', 'HC', 'AC']
+    cols_to_keep = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR', 'HC', 'AC', 'HS', 'AS', 'HST', 'AST']
     data = data.dropna(subset=cols_to_keep)
     data = data[cols_to_keep]
     data['Date'] = pd.to_datetime(data['Date'], errors='coerce', dayfirst=True)
@@ -54,17 +54,29 @@ class TeamState:
     def __init__(self):
         self.goals_scored = []
         self.goals_conceded = []
+        self.shots = []
+        self.shots_conceded = []
+        self.sot = []
+        self.sot_conceded = []
         self.points = []
         self.streak = 0
 
-    def update(self, gs, gc, pts):
+    def update(self, gs, gc, shots, shots_c, sot, sot_c, pts):
         self.goals_scored.append(gs)
         self.goals_conceded.append(gc)
+        self.shots.append(shots)
+        self.shots_conceded.append(shots_c)
+        self.sot.append(sot)
+        self.sot_conceded.append(sot_c)
         self.points.append(pts)
         
         if len(self.goals_scored) > 5:
             self.goals_scored.pop(0)
             self.goals_conceded.pop(0)
+            self.shots.pop(0)
+            self.shots_conceded.pop(0)
+            self.sot.pop(0)
+            self.sot_conceded.pop(0)
             self.points.pop(0)
             
         if pts == 3:
@@ -76,11 +88,15 @@ class TeamState:
             
     def get_features(self):
         if len(self.points) == 0:
-            return 0.0, 0.0, 0.0, 0, 0
+            return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0
         return (
             sum(self.points),
             sum(self.goals_scored),
             sum(self.goals_conceded),
+            sum(self.shots),
+            sum(self.shots_conceded),
+            sum(self.sot),
+            sum(self.sot_conceded),
             self.streak,
             len(self.points)
         )
@@ -109,14 +125,24 @@ def feature_engineering(data):
         if away not in team_states:
             team_states[away] = TeamState()
             
-        h_pts, h_gs, h_gc, h_streak, h_games = team_states[home].get_features()
-        a_pts, a_gs, a_gc, a_streak, a_games = team_states[away].get_features()
+        h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
+        a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
         
         if h_games >= 5 and a_games >= 5:
             h_attack = h_gs / h_games
             h_defense = h_gc / h_games
             a_attack = a_gs / a_games
             a_defense = a_gc / a_games
+            
+            h_shot_attack = h_sh / h_games
+            h_shot_defense = h_sh_c / h_games
+            a_shot_attack = a_sh / a_games
+            a_shot_defense = a_sh_c / a_games
+            
+            h_sot_attack = h_sot / h_games
+            h_sot_defense = h_sot_c / h_games
+            a_sot_attack = a_sot / a_games
+            a_sot_defense = a_sot_c / a_games
             
             feature_row = [
                 h_pts, h_gs, h_gc, h_streak,
@@ -126,7 +152,13 @@ def feature_engineering(data):
                 h_attack, h_defense,
                 a_attack, a_defense,
                 h_attack - a_defense, # Home pressure
-                a_attack - h_defense  # Away pressure
+                a_attack - h_defense, # Away pressure
+                h_shot_attack, h_shot_defense,
+                a_shot_attack, a_shot_defense,
+                h_sot_attack, h_sot_defense,
+                a_sot_attack, a_sot_defense,
+                h_sot_attack - a_sot_defense,
+                a_sot_attack - h_sot_defense
             ]
             features.append(feature_row)
             labels_h2h.append(label_map[ftr])
@@ -141,14 +173,14 @@ def feature_engineering(data):
             labels_corners.append(corners_val)
             
         if ftr == 'H':
-            team_states[home].update(row['FTHG'], row['FTAG'], 3)
-            team_states[away].update(row['FTAG'], row['FTHG'], 0)
+            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 3)
+            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 0)
         elif ftr == 'A':
-            team_states[home].update(row['FTHG'], row['FTAG'], 0)
-            team_states[away].update(row['FTAG'], row['FTHG'], 3)
+            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 0)
+            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 3)
         else:
-            team_states[home].update(row['FTHG'], row['FTAG'], 1)
-            team_states[away].update(row['FTAG'], row['FTHG'], 1)
+            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 1)
+            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 1)
             
     X = np.array(features)
     y_h2h = np.array(labels_h2h)
