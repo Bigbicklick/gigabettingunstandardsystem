@@ -135,6 +135,25 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         h_elo - a_elo   # ELO Difference Power
     ]
     
+    import math
+    def poisson(lam, k):
+        return math.exp(-lam) * (lam ** k) / math.factorial(k)
+        
+    poisson_btts_yes = 0.0
+    poisson_ou_over = 0.0
+    
+    # Generowanie matematycznej siatki Poissona (max 7 goli)
+    for h in range(7):
+        for a in range(7):
+            p = poisson(h_attack, h) * poisson(a_attack, a)
+            if h > 0 and a > 0:
+                poisson_btts_yes += p
+            if h + a > 2.5:
+                poisson_ou_over += p
+
+    poisson_btts_no = 1.0 - poisson_btts_yes
+    poisson_ou_under = 1.0 - poisson_ou_over
+    
     # Model predictions
     # 0 = Home, 1 = Draw, 2 = Away
     X = np.array([feature_row])
@@ -229,7 +248,10 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
                 btts_bookie_odds = _odds
                 
         if btts_highest_edge > 0.05:
-            btts_value_bet = True
+            poisson_prob_for_bet = poisson_btts_yes if btts_best_bet == "Select YES" else poisson_btts_no
+            poisson_edge = poisson_prob_for_bet - (1.0 / btts_bookie_odds)
+            if poisson_edge > 0.03:
+                btts_value_bet = True
 
     btts_recommended_stake = 0.0
     if btts_value_bet and btts_best_bet:
@@ -265,7 +287,10 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
                 ou_bookie_odds = _odds
                 
         if ou_highest_edge > 0.05:
-            ou_value_bet = True
+            poisson_prob_for_bet = poisson_ou_over if ou_best_bet == "Over 2.5 Goals" else poisson_ou_under
+            poisson_edge = poisson_prob_for_bet - (1.0 / ou_bookie_odds)
+            if poisson_edge > 0.03:
+                ou_value_bet = True
 
     ou_recommended_stake = 0.0
     if ou_value_bet and ou_best_bet:
