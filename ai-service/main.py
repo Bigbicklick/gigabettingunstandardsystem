@@ -298,11 +298,13 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         i_x2 = calculate_implied_prob(req.odds_dc_x2)
         i_12 = calculate_implied_prob(req.odds_dc_12)
         
-        edges_dc = {
-            "1X": ((p_home + p_draw) - i_1x, p_home + p_draw, req.odds_dc_1x),
-            "X2": ((p_away + p_draw) - i_x2, p_away + p_draw, req.odds_dc_x2),
-            "12": ((p_home + p_away) - i_12, p_home + p_away, req.odds_dc_12)
-        }
+        edges_dc = {}
+        if prediction_label == home or prediction_label == "Draw":
+            edges_dc["1X"] = ((p_home + p_draw) - i_1x, p_home + p_draw, req.odds_dc_1x)
+        if prediction_label == away or prediction_label == "Draw":
+            edges_dc["X2"] = ((p_away + p_draw) - i_x2, p_away + p_draw, req.odds_dc_x2)
+        if prediction_label == home or prediction_label == away:
+            edges_dc["12"] = ((p_home + p_away) - i_12, p_home + p_away, req.odds_dc_12)
         
         for k, (edge, m_prob, _odds) in edges_dc.items():
             if edge > dc_highest_edge:
@@ -336,10 +338,11 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         i_dnb_home = calculate_implied_prob(req.odds_dnb_home)
         i_dnb_away = calculate_implied_prob(req.odds_dnb_away)
         
-        edges_dnb = {
-            home: (p_dnb_home - i_dnb_home, p_dnb_home, req.odds_dnb_home),
-            away: (p_dnb_away - i_dnb_away, p_dnb_away, req.odds_dnb_away)
-        }
+        edges_dnb = {}
+        if prediction_label == home:
+            edges_dnb[home] = (p_dnb_home - i_dnb_home, p_dnb_home, req.odds_dnb_home)
+        elif prediction_label == away:
+            edges_dnb[away] = (p_dnb_away - i_dnb_away, p_dnb_away, req.odds_dnb_away)
         
         for k, (edge, m_prob, _odds) in edges_dnb.items():
             if edge > dnb_highest_edge:
