@@ -8,6 +8,8 @@ import ml_pipeline
 import logging
 import pandas as pd
 import numpy as np
+import threading
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = FastAPI(title="AI Betting Predictor", description="Machine Learning API for football match prediction.")
 logger = logging.getLogger(__name__)
@@ -39,6 +41,8 @@ class PredictionRequest(BaseModel):
     odds_dnb_home: Optional[float] = None
     odds_dnb_away: Optional[float] = None
 
+scheduler = BackgroundScheduler()
+
 def load_ai():
     global model, model_btts, model_ou, model_corners, team_states
     if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH) or not os.path.exists('model_ou.joblib'):
@@ -52,9 +56,23 @@ def load_ai():
     team_states = joblib.load(STATE_PATH)
     logger.info("Models and team states loaded successfully.")
 
+def scheduled_retrain():
+    logger.info("Starting Auto-Retraining Pipeline (APScheduler) - Fetching latest results...")
+    try:
+        # Retrain in background thread
+        ml_pipeline.train_model()
+        # Atomic swap in memory happens during load_ai
+        load_ai()
+        logger.info("Auto-Retraining Pipeline completed. RAM memory swapped without downtime.")
+    except Exception as e:
+        logger.error(f"Failed to auto-train: {e}")
+
 @app.on_event("startup")
 async def startup_event():
     load_ai()
+    # Schedule autonomous learning every Monday at 04:00 AM Europe Time
+    scheduler.add_job(scheduled_retrain, 'cron', day_of_week='mon', hour=4, minute=0)
+    scheduler.start()
 
 def calculate_implied_prob(odds: float) -> float:
     if not odds or odds <= 1.0:
@@ -94,6 +112,9 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     a_sot_attack = a_sot / a_games
     a_sot_defense = a_sot_c / a_games
     
+    h_elo = team_states[home].elo
+    a_elo = team_states[away].elo
+    
     feature_row = [
         h_pts, h_gs, h_gc, h_streak,
         a_pts, a_gs, a_gc, a_streak,
@@ -108,7 +129,10 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         h_sot_attack, h_sot_defense,
         a_sot_attack, a_sot_defense,
         h_sot_attack - a_sot_defense,
-        a_sot_attack - h_sot_defense
+        a_sot_attack - h_sot_defense,
+        h_elo,          # ELO Rating
+        a_elo,          # ELO Rating
+        h_elo - a_elo   # ELO Difference Power
     ]
     
     # Model predictions

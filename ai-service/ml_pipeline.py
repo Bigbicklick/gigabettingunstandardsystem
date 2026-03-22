@@ -59,7 +59,9 @@ class TeamState:
         self.sot = []
         self.sot_conceded = []
         self.points = []
+        self.points = []
         self.streak = 0
+        self.elo = 1500.0
 
     def update(self, gs, gc, shots, shots_c, sot, sot_c, pts):
         self.goals_scored.append(gs)
@@ -158,7 +160,11 @@ def feature_engineering(data):
                 h_sot_attack, h_sot_defense,
                 a_sot_attack, a_sot_defense,
                 h_sot_attack - a_sot_defense,
-                a_sot_attack - h_sot_defense
+                h_sot_attack - a_sot_defense,
+                a_sot_attack - h_sot_defense,
+                team_states[home].elo,
+                team_states[away].elo,
+                team_states[home].elo - team_states[away].elo
             ]
             features.append(feature_row)
             labels_h2h.append(label_map[ftr])
@@ -175,12 +181,24 @@ def feature_engineering(data):
         if ftr == 'H':
             team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 3)
             team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 0)
+            s_home, s_away = 1.0, 0.0
         elif ftr == 'A':
             team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 0)
             team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 3)
+            s_home, s_away = 0.0, 1.0
         else:
             team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 1)
             team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 1)
+            s_home, s_away = 0.5, 0.5
+            
+        # Elo Update Algorithm
+        h_elo = team_states[home].elo
+        a_elo = team_states[away].elo
+        e_home = 1 / (1 + 10 ** ((a_elo - (h_elo + 100)) / 400))
+        e_away = 1 - e_home
+        
+        team_states[home].elo = h_elo + 20 * (s_home - e_home)
+        team_states[away].elo = a_elo + 20 * (s_away - e_away)
             
     X = np.array(features)
     y_h2h = np.array(labels_h2h)
