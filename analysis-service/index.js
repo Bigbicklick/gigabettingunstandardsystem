@@ -270,11 +270,11 @@ async function analyzeUpcomingMatches() {
               ai_dc_forecast = $9,
               ai_dc_edge = $10,
               ai_dnb_forecast = $11,
-              ai_dnb_edge = $12
-          WHERE fixture_id = $13
-        `, [
-          prediction.most_likely_outcome, 
-          h2h ? h2h.edge_percent : null, 
+          ai_dnb_edge = $12
+      WHERE fixture_id = $13
+    `, [
+      h2h ? h2h.recommended_bet : null, 
+      h2h ? h2h.edge_percent : null, 
           btts ? btts.recommended_bet : null,
           btts ? btts.edge_percent : null,
           ou ? ou.recommended_bet : null,

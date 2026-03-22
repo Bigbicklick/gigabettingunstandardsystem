@@ -143,7 +143,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     # Value bet logic
     value_bet = False
     best_bet = None
-    highest_edge = 0.0
+    highest_edge = -100.0
     model_prob_for_bet = 0.0
     bookie_odds = 0.0
     
