@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import requests
 from datetime import datetime
+import time
 from xgboost import XGBClassifier
 
 # --- THE GIGA BRAIN: BALLDONTLIE.IO INTEGRATION ---
@@ -65,6 +66,11 @@ def fetch_historical_nba_games():
                 params["cursor"] = cursor
             
             resp = requests.get(BASE_URL, headers=HEADERS, params=params)
+            if resp.status_code == 429:
+                print(f"Rate limit hit! Sleeping for 10 seconds...")
+                time.sleep(10)
+                continue
+                
             if resp.status_code != 200:
                 print(f"Error fetching season {season}: {resp.status_code}")
                 break
@@ -74,6 +80,7 @@ def fetch_historical_nba_games():
                 break
                 
             all_games.extend(data["data"])
+            time.sleep(1) # Zabezpieczenie Giga API przed banem wgłąb
             
             # Balldontlie cursor logic (next_cursor is returned in meta)
             meta = data.get("meta", {})
