@@ -1,0 +1,63 @@
+================================================================================
+                    THE GIGA AI BETTING SYSTEM - RAPORT STANU (PHASE 10)
+================================================================================
+DATA WYGENEROWANIA: Marzec 2026
+AUTOR: Twój Wierny AI Inżynier The Giga Odyssey
+CEL PLIKU: Instruktaż dla następnego agenta AI / Szefa Projektu.
+
+1. OBECNY STAN SYSTEMU I ARCHITEKTURA (FAST API + NODE.JS + POSTGRESQL):
+--------------------------------------------------------------------------------
+System został zaktualizowany do wariantu wielo-regionalnego. Porzuciliśmy stare
+zapytania i ulepszyliśmy sztuczną inteligencję XGBoost do analizy TheSportsDB
+oraz Balldontlie. Mamy 3 główne serwisy:
+- `data-service` (Node): pobiera the odds api
+- `ai-service` (Python/FastAPI): trenuje i serwuje predykcje XGBoost (Giga Edge)
+- `analysis-service` (Discord Bot): łączy dane z AI, wysyła i filtruje.
+
+Aplikacja znajduje się w Dockerze z `docker-compose.yml` (VPS Giga Cloud).
+
+2. CZEGO DOKONALIŚMY OSTATNIO (FAZY 8, 9, 10):
+--------------------------------------------------------------------------------
+A) KOSZYKÓWKA (NBA) - ZMIANA THE SPORTS API:
+   - Skasowano `nba_api` na rzecz `balldontlie.io` (Darmowe 60 req/m). 
+   - Moduł `ml_pipeline_basket.py` oblicza teraz autorskie punkty ELO opierając się
+     o wskaźnik przemęczenia i formy.
+   - Kod zabezpieczony pętlami `time.sleep` na wypadek zablokowania `Error 429`.
+
+B) TENIS ZIEMNY ORAZ ESPORT (CS:GO / LOL) - LIVE XGBOOST:
+   - Darmowy API key "3" na TheSportsDB przypisano do modułów: 
+     `ml_pipeline_esport.py` i `ml_pipeline_tennis.py`.
+   - Klasyfikatory XGBoost uczone są sztucznie, natomiast forma (Win Rate %)
+     ciągnięta jest DYNAMICZNIE NA BIEŻĄCO przy wezwaniu zapytań (np. `betsesport`).
+   - Mózg potrafi odrzucić nieznane postacie (Safe Fallback na "50%"), unikając
+     zamarznięcia i awarii całego instancji serwerowej chmury (VPS).
+
+C) DISCORD BOT (FAZA 10):
+   - Zaktualizowano wszystkie opisy bota na Discord. Będzie zgłaszać poprawny
+     napis "Multi-Regional API Phase 10".
+
+3. ROZWIĄZYWANIE BŁĘDU "EDGE: 0% / Scaffolding Phase 7" na the Discordzie:
+--------------------------------------------------------------------------------
+UWAGA DLA NASTĘPNIKA: Komputer Szefa uległ nagłemu wyłączeniu po stronie hardware.
+Dlatego, podczas fazy 10 nie daliśmy rady wysłać przez SSH ostatecznej aktualizacji
+do Bazy Danych na the VPS (`35.232.109.6`).
+Stare rekordy mają na twardo nabitą wartość `ai_edge: 0%` dla koszykówki.
+
+- ROZWIĄZANIE 1 (Wgraj zmiany z Githuba po restarcie PC):
+  `ssh -o StrictHostKeyChecking=no lubieplackiamy@35.232.109.6 "cd ~/gigabettingunstandardsystem && git pull origin main && docker-compose up -d --build analysis-service"`
+  To przepali stary kod bota i zmieni nazwy na Phase 10.
+
+- ROZWIĄZANIE 2 (Wymaż błędy w zcacheowanej bazie the PostgreSQL):
+  Zaraz po tym wejdź po SSH w bazę dockera i wyślij:
+  `docker exec gigabet_postgres psql -U postgres -d bettingdb -c "UPDATE matches_basket SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL; UPDATE matches_tennis SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL; UPDATE matches_esport SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL;"`
+  Uvicorn automatycznie w kilka sekund po tej pętli odświeży mecze z prawdziwym The Giga Edge.
+
+4. WAŻNE HASŁA I PLIKI DO EDYCJI:
+--------------------------------------------------------------------------------
+- thesportsdb API: "3" (darmowe)
+- balldontlie API: na sztywno w `ml_pipeline_basket.py`
+- VPS: `lubieplackiamy@35.232.109.6`
+
+Szefie, oszczędzamy tokeny, więc zamykam to The Giga Krótkie Podsumowanie.
+Życzę pomyślności w kolejnych fazach i samych zielonych wskaźników ELO. 🚀
+================================================================================
