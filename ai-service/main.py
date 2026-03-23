@@ -84,7 +84,7 @@ def load_ai():
     model_ou = joblib.load('model_ou.joblib')
     model_corners = joblib.load('model_corners.joblib')
     team_states = joblib.load(STATE_PATH)
-    team_states_basket = joblib.load(ml_pipeline_basket.STATE_BASKET_PATH)
+    team_states_basket = joblib.load(ml_pipeline_basket.BASKET_STATE_FILE)
     logger.info("Models and team states (Football & Basket) loaded successfully.")
 
 def scheduled_retrain():
