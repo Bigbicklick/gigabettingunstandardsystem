@@ -32,8 +32,8 @@ const getEdgeAdvice = (edge) => {
 discordClient.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  if (message.content === 'bets') {
-     console.log('Received bets command');
+  if (message.content === 'betsfoot') {
+     console.log('Received betsfoot command');
      const pgClient = await pool.connect();
      try {
         const res = await pgClient.query(`
@@ -110,6 +110,12 @@ discordClient.on('messageCreate', async (message) => {
      } finally {
         pgClient.release();
      }
+  } else if (message.content === 'betsbasket') {
+      return message.reply("🏀 **MODUŁ NBA/KOSZYKÓWKI W BUDOWIE** 🏀\nThe Giga AI trenuje obecnie wagi rzutów za 3 punkty i formy zawodników. Oczekuj uderzenia niedługo!");
+  } else if (message.content === 'betstenis') {
+      return message.reply("🎾 **MODUŁ TENISA ATP/WTA W BUDOWIE** 🎾\nAlgorytm analizuje właśnie Elo Rating rakiet i wskaźniki przełamań serwisu. Oczekuj uderzenia niedługo!");
+  } else if (message.content === 'betsesport') {
+      return message.reply("🎮 **MODUŁ ESPORTU W BUDOWIE** 🎮\nSztuczna Inteligencja kalibruje celowniki, sprawdzając win-rate'y na poszczególnych mapach. Oczekuj uderzenia niedługo!");
   }
 });
 
@@ -319,7 +325,7 @@ async function sendHourlyReport() {
     `);
     
     if (res.rows.length === 0) {
-      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy do analizy na najbliższe 24h w 4 śledzonych ligach europejskich." });
+      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy piłkarskich do analizy na najbliższe 24h z 18 Giga Lig Europejskich." });
       return;
     }
     
