@@ -209,18 +209,121 @@ async function fetchUpcomingMatches() {
   }
 }
 
+async function fetchUpcomingBasketballMatches() {
+  const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
+  if (!ODDS_API_KEY) {
+    console.log('No THE_ODDS_API_KEY provided for Basketball. Skipping.');
+    return;
+  }
+  
+  console.log('Connecting to The Odds API to grab upcoming NBA fixtures & odds...');
+  try {
+    const response = await axios.get('https://api.the-odds-api.com/v4/sports/basketball_nba/odds/', {
+      params: {
+        apiKey: ODDS_API_KEY,
+        regions: 'eu,uk', // Szukamy popularnych bukmacherów posiadających spready
+        markets: 'h2h,spreads,totals',
+        oddsFormat: 'decimal'
+      }
+    });
+
+    const matches = response.data;
+    if (!matches || matches.length === 0) {
+      console.log('No NBA matches found.');
+      return;
+    }
+
+    const client = await pool.connect();
+    let savedCount = 0;
+    
+    for (const match of matches) {
+      if (new Date(match.commence_time) < new Date()) continue; // Skip live
+      
+      let oddsHome = null, oddsAway = null;
+      let spreadHome = null, spreadAway = null;
+      let totalsOver = null, totalsUnder = null;
+
+      // Szukamy najlepszego kursu pod kątem ML (Zwycięstwa)
+      if (match.bookmakers && match.bookmakers.length > 0) {
+        // Najlepszy bukmacher, ew. pierwszy z listy (np. Pinnacle, Unibet, Bet365)
+        const bm = match.bookmakers[0];
+        
+        // H2H
+        const h2hMarket = bm.markets.find(m => m.key === 'h2h');
+        if (h2hMarket && h2hMarket.outcomes) {
+           const hOut = h2hMarket.outcomes.find(o => o.name === match.home_team);
+           const aOut = h2hMarket.outcomes.find(o => o.name === match.away_team);
+           if (hOut) oddsHome = hOut.price;
+           if (aOut) oddsAway = aOut.price;
+        }
+
+        // Spreads (Handicap)
+        const spreadsMarket = bm.markets.find(m => m.key === 'spreads');
+        if (spreadsMarket && spreadsMarket.outcomes) {
+           const hOut = spreadsMarket.outcomes.find(o => o.name === match.home_team);
+           const aOut = spreadsMarket.outcomes.find(o => o.name === match.away_team);
+           // Przechowujemy też same linie w kursach (wartość spreadu i odd) jako Decimal logicznie
+           if (hOut) oddsSpreadHome = hOut.price; 
+           if (aOut) oddsSpreadAway = aOut.price;
+        }
+
+        // Totals (Over/Under)
+        const totalsMarket = bm.markets.find(m => m.key === 'totals');
+        if (totalsMarket && totalsMarket.outcomes) {
+           const overOut = totalsMarket.outcomes.find(o => o.name === 'Over');
+           const underOut = totalsMarket.outcomes.find(o => o.name === 'Under');
+           if (overOut) totalsOver = overOut.price;
+           if (underOut) totalsUnder = underOut.price;
+        }
+      }
+      
+      try {
+        await client.query(`
+          INSERT INTO matches_basket (
+            fixture_id, league_name, home_team, away_team, date, 
+            status, odds_home, odds_away, odds_spread_home, odds_spread_away, 
+            odds_totals_over, odds_totals_under
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          ON CONFLICT (fixture_id) DO UPDATE SET
+            odds_home = EXCLUDED.odds_home,
+            odds_away = EXCLUDED.odds_away,
+            odds_spread_home = EXCLUDED.odds_spread_home,
+            odds_spread_away = EXCLUDED.odds_spread_away,
+            odds_totals_over = EXCLUDED.odds_totals_over,
+            odds_totals_under = EXCLUDED.odds_totals_under
+        `, [
+          `nba_${match.id}`, 'NBA', match.home_team, match.away_team, match.commence_time, 
+          'NS', oddsHome, oddsAway, spreadHome, spreadAway, totalsOver, totalsUnder
+        ]);
+        savedCount++;
+      } catch (dbErr) {
+        console.error('Database write error NBA:', dbErr);
+      }
+    }
+    
+    console.log(`Saved ${savedCount} upcoming NBA matches into Postgres matches_basket table.`);
+    client.release();
+    
+  } catch (error) {
+    console.error('Error fetching NBA The Odds API data:', error.message);
+  }
+}
+
+
 async function start() {
   await initDB();
   await fetchUpcomingMatches(); // initial run
+  await fetchUpcomingBasketballMatches(); // initial basket run
   
   // The user explicitly authorized ignoring the 500 requests/month limit
   // in favor of getting bets sooner (will use multiple API keys if needed).
   // Fetching every 2 hours (12x a day) for 4 markets.
   cron.schedule('0 */2 * * *', () => {
     fetchUpcomingMatches();
+    fetchUpcomingBasketballMatches();
   });
   
-  console.log('Data service started and aggressively scheduled to run every 2 hours.');
+  console.log('Data service started and aggressively scheduled to run every 2 hours (Multi-Sport enabled).');
 }
 
 // Ensure the process stays alive even without express
