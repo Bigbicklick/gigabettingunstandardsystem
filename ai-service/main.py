@@ -6,6 +6,8 @@ import os
 import uvicorn
 import ml_pipeline
 import ml_pipeline_basket
+import ml_pipeline_esport
+import ml_pipeline_tennis
 import logging
 import pandas as pd
 import numpy as np
@@ -78,6 +80,14 @@ def load_ai():
     if not os.path.exists(ml_pipeline_basket.BASKET_STATE_FILE):
         logger.warning("Basket State not found. Training Basketball ML pipeline...")
         ml_pipeline_basket.train_basket_model()
+        
+    if not os.path.exists(ml_pipeline_esport.ESPORT_MODEL_FILE):
+        logger.warning("Esport Model not found. Synthesizing Esport ML pipeline...")
+        ml_pipeline_esport.train_esport_model()
+        
+    if not os.path.exists(ml_pipeline_tennis.TENNIS_MODEL_FILE):
+        logger.warning("Tennis Model not found. Synthesizing Tennis ML pipeline...")
+        ml_pipeline_tennis.train_tennis_model()
     
     model = joblib.load(MODEL_PATH)
     model_btts = joblib.load('model_btts.joblib')
@@ -131,19 +141,27 @@ def predict_basket(req: BasketPredictionRequest) -> Dict[str, Any]:
 
 @app.post("/predict_tennis")
 def predict_tennis(req: PredictionRequestTennis) -> Dict[str, Any]:
+    pred = ml_pipeline_tennis.predict_tennis_match(req.home_team, req.away_team, req.odds_home, req.odds_away)
     return {
         "value_bet": {
-            "recommended_bet": "Home Win", "model_probability": 50.0,
-            "bookmaker_odds": req.odds_home, "edge_percent": 0.0, "is_value": False
+            "recommended_bet": pred.get("recommended_bet", "Pending..."),
+            "model_probability": pred.get("model_probability", 50.0),
+            "bookmaker_odds": req.odds_home if pred.get("recommended_bet") == "Home Win" else req.odds_away,
+            "edge_percent": pred.get("edge_percent", 0.0),
+            "is_value": pred.get("is_value", False)
         }
     }
 
 @app.post("/predict_esport")
 def predict_esport(req: PredictionRequestEsport) -> Dict[str, Any]:
+    pred = ml_pipeline_esport.predict_esport_match(req.home_team, req.away_team, req.odds_home, req.odds_away)
     return {
         "value_bet": {
-            "recommended_bet": "Home Win", "model_probability": 50.0,
-            "bookmaker_odds": req.odds_home, "edge_percent": 0.0, "is_value": False
+            "recommended_bet": pred.get("recommended_bet", "Pending..."),
+            "model_probability": pred.get("model_probability", 50.0),
+            "bookmaker_odds": req.odds_home if pred.get("recommended_bet") == "Home Win" else req.odds_away,
+            "edge_percent": pred.get("edge_percent", 0.0),
+            "is_value": pred.get("is_value", False)
         }
     }
 
