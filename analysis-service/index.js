@@ -111,7 +111,52 @@ discordClient.on('messageCreate', async (message) => {
         pgClient.release();
      }
   } else if (message.content === 'betsbasket') {
-      return message.reply("🏀 **MODUŁ NBA/KOSZYKÓWKI W BUDOWIE** 🏀\nThe Giga AI trenuje obecnie wagi rzutów za 3 punkty i formy zawodników. Oczekuj uderzenia niedługo!");
+     console.log('Received betsbasket command');
+     const pgClient = await pool.connect();
+     try {
+        const res = await pgClient.query(`
+          SELECT home_team, away_team, odds_home, odds_away, odds_spread_home, odds_spread_away, odds_totals_over, ai_forecast, ai_edge
+          FROM matches_basket 
+          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+        `);
+        
+        if (res.rows.length === 0) {
+          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów NBA na najbliższe 48h.");
+        }
+        
+        let currentReport = "🏀 **KURSOWY RAPORT NBA THE GIGA AI (Scaffolding Phase 7)** 🏀\n\n";
+        const payloads = [];
+        
+        for (const m of res.rows) {
+             const formatEdge = (edge) => (!edge || edge <= 0) ? '0%' : `${edge}%`;
+
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
+             chunk += `> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n`;
+             if (m.odds_spread_home) chunk += `> Spread Home: ${m.odds_spread_home}\n`;
+             if (m.odds_totals_over) chunk += `> Totals Over: ${m.odds_totals_over}\n`;
+             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${formatEdge(m.ai_edge)})\n\n`;
+             
+             if (currentReport.length + chunk.length > 1900) {
+                 payloads.push(currentReport);
+                 currentReport = chunk;
+             } else {
+                 currentReport += chunk;
+             }
+        }
+        
+        if (currentReport.trim().length > 0) {
+             payloads.push(currentReport);
+        }
+
+        for (const payload of payloads) {
+             await message.reply(payload);
+        }
+     } catch(e) {
+        console.error(e);
+        return message.reply("Wystąpił błąd podczas pobierania meczów NBA (Database I/O).");
+     } finally {
+        pgClient.release();
+     }
   } else if (message.content === 'betstenis') {
       return message.reply("🎾 **MODUŁ TENISA ATP/WTA W BUDOWIE** 🎾\nAlgorytm analizuje właśnie Elo Rating rakiet i wskaźniki przełamań serwisu. Oczekuj uderzenia niedługo!");
   } else if (message.content === 'betsesport') {
@@ -379,15 +424,72 @@ async function sendHourlyReport() {
   }
 }
 
+async function analyzeUpcomingBasketMatches() {
+  console.log('Running analysis on upcoming NBA matches...');
+  const client = await pool.connect();
+  
+  try {
+    const res = await client.query(`
+      SELECT * FROM matches_basket 
+      WHERE date > NOW() 
+      AND date < NOW() + INTERVAL '48 hours'
+      AND sent_to_discord = false 
+      AND odds_home IS NOT NULL
+      AND status IN ('NS', 'TBD');
+    `);
+    
+    console.log(`Found ${res.rows.length} NBA matches to analyze.`);
+    
+    for (const match of res.rows) {
+      try {
+        const aiResponse = await axios.post(`${AI_SERVICE_URL}/predict_basket`, {
+          home_team: match.home_team,
+          away_team: match.away_team,
+          odds_home: match.odds_home ? parseFloat(match.odds_home) : null,
+          odds_away: match.odds_away ? parseFloat(match.odds_away) : null,
+          odds_spread_home: match.odds_spread_home ? parseFloat(match.odds_spread_home) : null,
+          odds_spread_away: match.odds_spread_away ? parseFloat(match.odds_spread_away) : null,
+          odds_totals_over: match.odds_totals_over ? parseFloat(match.odds_totals_over) : null,
+          odds_totals_under: match.odds_totals_under ? parseFloat(match.odds_totals_under) : null
+        });
+        
+        const prediction = aiResponse.data.value_bet;
+        
+        // Brak Edge Threshold w trakcie Scaffoldingowania
+        await client.query(`
+          UPDATE matches_basket 
+          SET sent_to_discord = true, 
+              ai_forecast = $1, 
+              ai_edge = $2
+          WHERE fixture_id = $3
+        `, [
+          prediction.recommended_bet, 
+          prediction.edge_percent, 
+          match.fixture_id
+        ]);
+        
+      } catch (aiError) {
+        console.error(`Error analyzing NBA match ${match.fixture_id}:`, aiError.message);
+      }
+    }
+  } catch (err) {
+    console.error('Error in analyze Basket function:', err);
+  } finally {
+    client.release();
+  }
+}
+
 function start() {
   // Let the DB init and data-service run first
   setTimeout(() => {
     analyzeUpcomingMatches();
+    analyzeUpcomingBasketMatches();
   }, 10000);
   
   // Run every 10 minutes for signals
   cron.schedule('*/10 * * * *', () => {
     analyzeUpcomingMatches();
+    analyzeUpcomingBasketMatches();
   });
 
   // Run every hour at minute 0 for the summary report
