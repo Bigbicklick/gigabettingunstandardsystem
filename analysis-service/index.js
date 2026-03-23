@@ -158,9 +158,53 @@ discordClient.on('messageCreate', async (message) => {
         pgClient.release();
      }
   } else if (message.content === 'betstenis') {
-      return message.reply("🎾 **MODUŁ TENISA ATP/WTA W BUDOWIE** 🎾\nAlgorytm analizuje właśnie Elo Rating rakiet i wskaźniki przełamań serwisu. Oczekuj uderzenia niedługo!");
+     console.log('Received betstenis command');
+     const pgClient = await pool.connect();
+     try {
+        const res = await pgClient.query(`
+          SELECT home_team, away_team, odds_home, odds_away, ai_forecast, ai_edge
+          FROM matches_tennis 
+          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+        `);
+        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Tenisa (ATP) na najbliższe 48h.");
+        
+        let cr = "🎾 **KURSOWY RAPORT TENIS THE GIGA AI (Scaffolding Phase 7)** 🎾\n\n";
+        const payloads = [];
+        for (const m of res.rows) {
+             const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
+             if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
+        }
+        if (cr.trim().length > 0) payloads.push(cr);
+        for (const p of payloads) await message.reply(p);
+     } catch(e) {
+        console.error(e);
+        return message.reply("Wystąpił błąd DB dla Tenisa.");
+     } finally { pgClient.release(); }
   } else if (message.content === 'betsesport') {
-      return message.reply("🎮 **MODUŁ ESPORTU W BUDOWIE** 🎮\nSztuczna Inteligencja kalibruje celowniki, sprawdzając win-rate'y na poszczególnych mapach. Oczekuj uderzenia niedługo!");
+     console.log('Received betsesport command');
+     const pgClient = await pool.connect();
+     try {
+        const res = await pgClient.query(`
+          SELECT home_team, away_team, odds_home, odds_away, ai_forecast, ai_edge
+          FROM matches_esport 
+          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+        `);
+        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Esportu (CS2/LoL) na najbliższe 48h.");
+        
+        let cr = "🎮 **KURSOWY RAPORT ESPORT THE GIGA AI (Scaffolding Phase 7)** 🎮\n\n";
+        const payloads = [];
+        for (const m of res.rows) {
+             const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
+             if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
+        }
+        if (cr.trim().length > 0) payloads.push(cr);
+        for (const p of payloads) await message.reply(p);
+     } catch(e) {
+        console.error(e);
+        return message.reply("Wystąpił błąd DB dla Esportu.");
+     } finally { pgClient.release(); }
   }
 });
 
@@ -479,17 +523,51 @@ async function analyzeUpcomingBasketMatches() {
   }
 }
 
+async function analyzeUpcomingTennisMatches() {
+  const client = await pool.connect();
+  try {
+    const res = await client.query(`SELECT * FROM matches_tennis WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
+    for (const match of res.rows) {
+      try {
+        const ar = await axios.post(`${AI_SERVICE_URL}/predict_tennis`, { home_team: match.home_team, away_team: match.away_team, odds_home: typeof match.odds_home !== 'undefined' ? parseFloat(match.odds_home) : null, odds_away: typeof match.odds_away !== 'undefined' ? parseFloat(match.odds_away) : null });
+        const pred = ar.data.value_bet;
+        await client.query(`UPDATE matches_tennis SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2 WHERE fixture_id = $3`, [pred.recommended_bet, pred.edge_percent, match.fixture_id]);
+      } catch (e) {}
+    }
+  } catch (e) {
+  } finally { client.release(); }
+}
+
+async function analyzeUpcomingEsportsMatches() {
+  const client = await pool.connect();
+  try {
+    const res = await client.query(`SELECT * FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
+    for (const match of res.rows) {
+      try {
+        const ar = await axios.post(`${AI_SERVICE_URL}/predict_esport`, { home_team: match.home_team, away_team: match.away_team, odds_home: typeof match.odds_home !== 'undefined' ? parseFloat(match.odds_home) : null, odds_away: typeof match.odds_away !== 'undefined' ? parseFloat(match.odds_away) : null });
+        const pred = ar.data.value_bet;
+        await client.query(`UPDATE matches_esport SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2 WHERE fixture_id = $3`, [pred.recommended_bet, pred.edge_percent, match.fixture_id]);
+      } catch (e) {}
+    }
+  } catch (e) {
+  } finally { client.release(); }
+}
+
 function start() {
   // Let the DB init and data-service run first
   setTimeout(() => {
     analyzeUpcomingMatches();
     analyzeUpcomingBasketMatches();
+    analyzeUpcomingTennisMatches();
+    analyzeUpcomingEsportsMatches();
   }, 10000);
   
   // Run every 10 minutes for signals
   cron.schedule('*/10 * * * *', () => {
     analyzeUpcomingMatches();
     analyzeUpcomingBasketMatches();
+    analyzeUpcomingTennisMatches();
+    analyzeUpcomingEsportsMatches();
   });
 
   // Run every hour at minute 0 for the summary report

@@ -55,6 +55,18 @@ class BasketPredictionRequest(BaseModel):
     odds_totals_over: Optional[float] = None
     odds_totals_under: Optional[float] = None
 
+class PredictionRequestTennis(BaseModel):
+    home_team: str
+    away_team: str
+    odds_home: Optional[float] = None
+    odds_away: Optional[float] = None
+
+class PredictionRequestEsport(BaseModel):
+    home_team: str
+    away_team: str
+    odds_home: Optional[float] = None
+    odds_away: Optional[float] = None
+
 scheduler = BackgroundScheduler()
 
 def load_ai():
@@ -114,6 +126,24 @@ def predict_basket(req: BasketPredictionRequest) -> Dict[str, Any]:
             "is_value": False,
             "confidence_score": 0.0,
             "recommended_stake_percentage": 0.0
+        }
+    }
+
+@app.post("/predict_tennis")
+def predict_tennis(req: PredictionRequestTennis) -> Dict[str, Any]:
+    return {
+        "value_bet": {
+            "recommended_bet": "Home Win", "model_probability": 50.0,
+            "bookmaker_odds": req.odds_home, "edge_percent": 0.0, "is_value": False
+        }
+    }
+
+@app.post("/predict_esport")
+def predict_esport(req: PredictionRequestEsport) -> Dict[str, Any]:
+    return {
+        "value_bet": {
+            "recommended_bet": "Home Win", "model_probability": 50.0,
+            "bookmaker_odds": req.odds_home, "edge_percent": 0.0, "is_value": False
         }
     }
 

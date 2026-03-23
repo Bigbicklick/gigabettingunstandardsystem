@@ -309,11 +309,83 @@ async function fetchUpcomingBasketballMatches() {
   }
 }
 
+async function fetchUpcomingTennisMatches() {
+  const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
+  if (!ODDS_API_KEY) return;
+  console.log('Connecting to The Odds API for Tennis ATP...');
+  try {
+    const res = await axios.get('https://api.the-odds-api.com/v4/sports/tennis_atp/odds/', {
+      params: { apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
+    });
+    const client = await pool.connect();
+    let saved = 0;
+    for (const match of res.data) {
+      if (new Date(match.commence_time) < new Date()) continue;
+      let oH = null, oA = null;
+      if (match.bookmakers && match.bookmakers.length > 0) {
+        const h2h = match.bookmakers[0].markets.find(m => m.key === 'h2h');
+        if (h2h && h2h.outcomes) {
+           const hOut = h2h.outcomes.find(o => o.name === match.home_team);
+           const aOut = h2h.outcomes.find(o => o.name === match.away_team);
+           if (hOut) oH = hOut.price;
+           if (aOut) oA = aOut.price;
+        }
+      }
+      try {
+        await client.query(`
+          INSERT INTO matches_tennis (fixture_id, home_team, away_team, date, odds_home, odds_away) 
+          VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
+        `, [`ten_${match.id}`, match.home_team, match.away_team, match.commence_time, oH, oA]);
+        saved++;
+      } catch (e) {}
+    }
+    console.log(`Saved ${saved} upcoming Tennis ATP matches.`);
+    client.release();
+  } catch (e) {}
+}
+
+async function fetchUpcomingEsportsMatches() {
+  const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
+  if (!ODDS_API_KEY) return;
+  console.log('Connecting to The Odds API for Esports CS:GO...');
+  try {
+    const res = await axios.get('https://api.the-odds-api.com/v4/sports/esports_csgo/odds/', {
+      params: { apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
+    });
+    const client = await pool.connect();
+    let saved = 0;
+    for (const match of res.data) {
+      if (new Date(match.commence_time) < new Date()) continue;
+      let oH = null, oA = null;
+      if (match.bookmakers && match.bookmakers.length > 0) {
+        const h2h = match.bookmakers[0].markets.find(m => m.key === 'h2h');
+        if (h2h && h2h.outcomes) {
+           const hOut = h2h.outcomes.find(o => o.name === match.home_team);
+           const aOut = h2h.outcomes.find(o => o.name === match.away_team);
+           if (hOut) oH = hOut.price;
+           if (aOut) oA = aOut.price;
+        }
+      }
+      try {
+        await client.query(`
+          INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, odds_home, odds_away) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
+        `, [`esp_${match.id}`, 'CS:GO', match.home_team, match.away_team, match.commence_time, oH, oA]);
+        saved++;
+      } catch (e) {}
+    }
+    console.log(`Saved ${saved} upcoming Esports CS:GO matches.`);
+    client.release();
+  } catch (e) {}
+}
+
 
 async function start() {
   await initDB();
   await fetchUpcomingMatches(); // initial run
   await fetchUpcomingBasketballMatches(); // initial basket run
+  await fetchUpcomingTennisMatches();
+  await fetchUpcomingEsportsMatches();
   
   // The user explicitly authorized ignoring the 500 requests/month limit
   // in favor of getting bets sooner (will use multiple API keys if needed).
@@ -321,6 +393,8 @@ async function start() {
   cron.schedule('0 */2 * * *', () => {
     fetchUpcomingMatches();
     fetchUpcomingBasketballMatches();
+    fetchUpcomingTennisMatches();
+    fetchUpcomingEsportsMatches();
   });
   
   console.log('Data service started and aggressively scheduled to run every 2 hours (Multi-Sport enabled).');
