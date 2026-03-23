@@ -124,7 +124,7 @@ discordClient.on('messageCreate', async (message) => {
           return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów NBA na najbliższe 48h.");
         }
         
-        let currentReport = "🏀 **KURSOWY RAPORT NBA THE GIGA AI (Scaffolding Phase 7)** 🏀\n\n";
+        let currentReport = "🏀 **KURSOWY RAPORT NBA [Multi-Regional API: Phase 10]** 🏀🔥\nThe Giga Brain: Live XGBoost Engine\n\n";
         const payloads = [];
         
         for (const m of res.rows) {
@@ -168,7 +168,7 @@ discordClient.on('messageCreate', async (message) => {
         `);
         if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Tenisa (ATP) na najbliższe 48h.");
         
-        let cr = "🎾 **KURSOWY RAPORT TENIS THE GIGA AI (Scaffolding Phase 7)** 🎾\n\n";
+        let cr = "🎾 **KURSOWY RAPORT TENIS [Multi-Regional ATP: Phase 10]** 🎾🔥\nTheSportsDB Live XGBoost Fetch\n\n";
         const payloads = [];
         for (const m of res.rows) {
              const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
@@ -192,7 +192,7 @@ discordClient.on('messageCreate', async (message) => {
         `);
         if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Esportu (CS2/LoL) na najbliższe 48h.");
         
-        let cr = "🎮 **KURSOWY RAPORT ESPORT THE GIGA AI (Scaffolding Phase 7)** 🎮\n\n";
+        let cr = "🎮 **KURSOWY RAPORT ESPORT [Multi-Regional: Phase 10]** 🎮🔥\nTheSportsDB Live AI Engine\n\n";
         const payloads = [];
         for (const m of res.rows) {
              const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
