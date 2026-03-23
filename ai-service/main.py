@@ -5,6 +5,7 @@ import joblib
 import os
 import uvicorn
 import ml_pipeline
+import ml_pipeline_basket
 import logging
 import pandas as pd
 import numpy as np
@@ -22,6 +23,9 @@ model_btts = None
 model_ou = None
 model_corners = None
 team_states = None
+
+# Modele NBA
+team_states_basket = None
 
 class PredictionRequest(BaseModel):
     home_team: str
@@ -41,20 +45,35 @@ class PredictionRequest(BaseModel):
     odds_dnb_home: Optional[float] = None
     odds_dnb_away: Optional[float] = None
 
+class BasketPredictionRequest(BaseModel):
+    home_team: str
+    away_team: str
+    odds_home: Optional[float] = None
+    odds_away: Optional[float] = None
+    odds_spread_home: Optional[float] = None
+    odds_spread_away: Optional[float] = None
+    odds_totals_over: Optional[float] = None
+    odds_totals_under: Optional[float] = None
+
 scheduler = BackgroundScheduler()
 
 def load_ai():
-    global model, model_btts, model_ou, model_corners, team_states
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH) or not os.path.exists('model_ou.joblib'):
-        logger.warning("Model not found. Executing ML Pipeline to fetch data and train model...")
+    global model, model_btts, model_ou, model_corners, team_states, team_states_basket
+    if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH):
+        logger.warning("Football Model not found. Executing ML Pipeline to fetch data and train model...")
         ml_pipeline.train_model()
+        
+    if not os.path.exists(ml_pipeline_basket.STATE_BASKET_PATH):
+        logger.warning("Basket State not found. Booting Scaffolding pipeline...")
+        ml_pipeline_basket.train_model_basket()
     
     model = joblib.load(MODEL_PATH)
     model_btts = joblib.load('model_btts.joblib')
     model_ou = joblib.load('model_ou.joblib')
     model_corners = joblib.load('model_corners.joblib')
     team_states = joblib.load(STATE_PATH)
-    logger.info("Models and team states loaded successfully.")
+    team_states_basket = joblib.load(ml_pipeline_basket.STATE_BASKET_PATH)
+    logger.info("Models and team states (Football & Basket) loaded successfully.")
 
 def scheduled_retrain():
     logger.info("Starting Auto-Retraining Pipeline (APScheduler) - Fetching latest results...")
@@ -81,7 +100,22 @@ def calculate_implied_prob(odds: float) -> float:
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "model_loaded": model is not None}
+    return {"status": "ok", "football_loaded": model is not None, "basket_loaded": team_states_basket is not None}
+
+@app.post("/predict_basket")
+def predict_basket(req: BasketPredictionRequest) -> Dict[str, Any]:
+    # Giga Scaffolding dla punktów NBA
+    return {
+        "value_bet": {
+            "recommended_bet": "Home Win",
+            "model_probability": 50.0,
+            "bookmaker_odds": req.odds_home,
+            "edge_percent": 0.0,
+            "is_value": False,
+            "confidence_score": 0.0,
+            "recommended_stake_percentage": 0.0
+        }
+    }
 
 @app.post("/predict")
 def predict(req: PredictionRequest) -> Dict[str, Any]:
