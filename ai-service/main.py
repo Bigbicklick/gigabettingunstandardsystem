@@ -75,9 +75,9 @@ def load_ai():
         logger.warning("Football Model not found. Executing ML Pipeline to fetch data and train model...")
         ml_pipeline.train_model()
         
-    if not os.path.exists(ml_pipeline_basket.STATE_BASKET_PATH):
-        logger.warning("Basket State not found. Booting Scaffolding pipeline...")
-        ml_pipeline_basket.train_model_basket()
+    if not os.path.exists(ml_pipeline_basket.BASKET_STATE_FILE):
+        logger.warning("Basket State not found. Training Basketball ML pipeline...")
+        ml_pipeline_basket.train_basket_model()
     
     model = joblib.load(MODEL_PATH)
     model_btts = joblib.load('model_btts.joblib')
@@ -116,14 +116,14 @@ def health_check():
 
 @app.post("/predict_basket")
 def predict_basket(req: BasketPredictionRequest) -> Dict[str, Any]:
-    # Giga Scaffolding dla punktów NBA
+    pred = ml_pipeline_basket.predict_basket_match(req.home_team, req.away_team, req.odds_home, req.odds_away)
     return {
         "value_bet": {
-            "recommended_bet": "Home Win",
-            "model_probability": 50.0,
-            "bookmaker_odds": req.odds_home,
-            "edge_percent": 0.0,
-            "is_value": False,
+            "recommended_bet": pred.get("recommended_bet", "Pending..."),
+            "model_probability": pred.get("model_probability", 50.0),
+            "bookmaker_odds": req.odds_home if pred.get("recommended_bet") == "Home Win" else req.odds_away,
+            "edge_percent": pred.get("edge_percent", 0.0),
+            "is_value": pred.get("is_value", False),
             "confidence_score": 0.0,
             "recommended_stake_percentage": 0.0
         }
