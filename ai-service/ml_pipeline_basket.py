@@ -203,78 +203,110 @@ def train_basket_model():
     print(f"BASKETBALL MACHINE LEARNING TRAINED. Model saved to {BASKET_MODEL_FILE}")
 
 def predict_basket_match(home_team, away_team, odds_home=None, odds_away=None):
-    if not os.path.exists(BASKET_MODEL_FILE) or not os.path.exists(BASKET_STATE_FILE):
+    """
+    Odds-Anchored prediction for NBA:
+    1. Start from bookmaker implied probability (strongest signal)
+    2. Apply Elo-based correction (max ±15%)
+    3. Apply rest days micro-adjustment (max ±3%)
+    """
+    if not os.path.exists(BASKET_STATE_FILE):
+        # No Elo state — fall back to pure odds
+        if odds_home and odds_away and odds_home > 0 and odds_away > 0:
+            implied_home = (1.0 / odds_home)
+            implied_away = (1.0 / odds_away)
+            total = implied_home + implied_away
+            fair_home = implied_home / total
+            if fair_home > 0.5:
+                return {"recommended_bet": "Home Win", "model_probability": round(fair_home * 100, 2), "edge_percent": 0.0, "is_value": False}
+            else:
+                return {"recommended_bet": "Away Win", "model_probability": round((1 - fair_home) * 100, 2), "edge_percent": 0.0, "is_value": False}
         return {"recommended_bet": "Pending...", "edge_percent": 0.0, "is_value": False}
-        
-    model = joblib.load(BASKET_MODEL_FILE)
+
     state = joblib.load(BASKET_STATE_FILE)
-    
     elos = state['elos']
     last_game_date = state['last_game_date']
-    
+
     home_elo = elos.get(home_team, get_base_elo())
     away_elo = elos.get(away_team, get_base_elo())
-    elo_diff = home_elo - away_elo
-    
+
     today = datetime.now()
     home_rest = 7
     away_rest = 7
-    
     if home_team in last_game_date:
         home_rest = min((today - last_game_date[home_team]).days, 7)
     if away_team in last_game_date:
         away_rest = min((today - last_game_date[away_team]).days, 7)
-        
-    X_pred = pd.DataFrame([{
-        'Home_Elo': home_elo,
-        'Away_Elo': away_elo,
-        'Elo_Diff': elo_diff,
-        'Home_Rest_Days': home_rest,
-        'Away_Rest_Days': away_rest
-    }])
-    
-    prob_home = model.predict_proba(X_pred)[0][1]
-    
-    # 5. Giga Edge Calculation! (The Money Maker)
-    recommended_bet = "Brak Zaufania"
-    edge = 0.0
-    is_value = False
-    
-    prob_home_pct = prob_home * 100
-    prob_away_pct = (1.0 - prob_home) * 100
-    
-    # Szukamy The Giga Edge (rozstrzał bukmachera w stosunku do XGBoost)
-    if odds_home and odds_away:
-        implied_home = (1 / odds_home) * 100
-        implied_away = (1 / odds_away) * 100
-        
-        edge_home = prob_home_pct - implied_home
-        edge_away = prob_away_pct - implied_away
-        
-        if edge_home > edge_away and edge_home > 3.0: # Minimum 3% przewagi nad rynkiem
-            recommended_bet = "Home Win"
-            edge = round(edge_home, 2)
-            is_value = True
+
+    if odds_home and odds_away and odds_home > 0 and odds_away > 0:
+        # Bookmaker implied probabilities
+        implied_home = 1.0 / odds_home
+        implied_away = 1.0 / odds_away
+        total_implied = implied_home + implied_away
+
+        # Fair probabilities (margin removed)
+        fair_home = implied_home / total_implied
+        fair_away = implied_away / total_implied
+
+        # Elo adjustment: convert Elo diff to probability shift
+        # Elo diff of 100 points = ~0.064 expected score difference
+        # We cap the adjustment at ±15%
+        elo_diff = home_elo - away_elo
+        # Only apply Elo adjustment if we have REAL Elo data (not both default 1500)
+        if home_elo != get_base_elo() or away_elo != get_base_elo():
+            elo_expected = calculate_expected_score(home_elo, away_elo)
+            elo_adjustment = (elo_expected - 0.5) * 0.30  # Scale: max ±15%
+            elo_adjustment = max(-0.15, min(0.15, elo_adjustment))
+        else:
+            elo_adjustment = 0.0
+
+        # Rest days micro-adjustment (max ±3%)
+        rest_diff = home_rest - away_rest
+        rest_adjustment = (rest_diff / 7.0) * 0.03  # Max ±3%
+
+        # Combine
+        model_home = max(0.05, min(0.95, fair_home + elo_adjustment + rest_adjustment))
+        model_away = 1.0 - model_home
+
+        prob_home_pct = model_home * 100
+        prob_away_pct = model_away * 100
+
+        edge_home = prob_home_pct - (implied_home * 100)
+        edge_away = prob_away_pct - (implied_away * 100)
+
+        if edge_home > edge_away and edge_home > 3.0:
+            return {
+                "recommended_bet": "Home Win",
+                "model_probability": round(prob_home_pct, 2),
+                "edge_percent": round(edge_home, 2),
+                "is_value": True
+            }
         elif edge_away > edge_home and edge_away > 3.0:
-            recommended_bet = "Away Win"
-            edge = round(edge_away, 2)
-            is_value = True
+            return {
+                "recommended_bet": "Away Win",
+                "model_probability": round(prob_away_pct, 2),
+                "edge_percent": round(edge_away, 2),
+                "is_value": True
+            }
         else:
-            if prob_home_pct > 50:
-                 recommended_bet = "Home Win"
-                 edge = round(edge_home, 2)
+            if prob_home_pct > prob_away_pct:
+                return {
+                    "recommended_bet": "Home Win",
+                    "model_probability": round(prob_home_pct, 2),
+                    "edge_percent": round(edge_home, 2),
+                    "is_value": False
+                }
             else:
-                 recommended_bet = "Away Win"
-                 edge = round(edge_away, 2)
+                return {
+                    "recommended_bet": "Away Win",
+                    "model_probability": round(prob_away_pct, 2),
+                    "edge_percent": round(edge_away, 2),
+                    "is_value": False
+                }
     else:
-        if prob_home_pct > 50:
-             recommended_bet = "Home Win"
+        # No odds — use Elo-based prediction only
+        elo_prob = calculate_expected_score(home_elo, away_elo)
+        if elo_prob > 0.5:
+            return {"recommended_bet": "Home Win", "model_probability": round(elo_prob * 100, 2), "edge_percent": 0.0, "is_value": False}
         else:
-             recommended_bet = "Away Win"
-             
-    return {
-        "recommended_bet": recommended_bet,
-        "model_probability": round(prob_home_pct if recommended_bet == "Home Win" else prob_away_pct, 2),
-        "edge_percent": edge,
-        "is_value": is_value
-    }
+            return {"recommended_bet": "Away Win", "model_probability": round((1 - elo_prob) * 100, 2), "edge_percent": 0.0, "is_value": False}
+

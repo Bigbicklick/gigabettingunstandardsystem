@@ -121,7 +121,7 @@ discordClient.on('messageCreate', async (message) => {
         `);
         
         if (res.rows.length === 0) {
-          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów NBA na najbliższe 48h.");
+          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów NBA na najbliższe 7 dni.");
         }
         
         let currentReport = "🏀 **KURSOWY RAPORT NBA [Multi-Regional API: Phase 10]** 🏀🔥\nThe Giga Brain: Live XGBoost Engine\n\n";
@@ -164,7 +164,7 @@ discordClient.on('messageCreate', async (message) => {
         const res = await pgClient.query(`
           SELECT home_team, away_team, odds_home, odds_away, ai_forecast, ai_edge
           FROM matches_tennis 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+          WHERE date > NOW() AND date < NOW() + INTERVAL '7 days'
         `);
         if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Tenisa (ATP) na najbliższe 48h.");
         
@@ -527,7 +527,7 @@ async function analyzeUpcomingTennisMatches() {
   console.log('Running analysis on upcoming Tennis matches...');
   const client = await pool.connect();
   try {
-    const res = await client.query(`SELECT * FROM matches_tennis WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
+    const res = await client.query(`SELECT * FROM matches_tennis WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false;`);
     console.log(`Found ${res.rows.length} Tennis matches to analyze.`);
     for (const match of res.rows) {
       try {
@@ -546,7 +546,7 @@ async function analyzeUpcomingEsportsMatches() {
   console.log('Running analysis on upcoming Esports matches...');
   const client = await pool.connect();
   try {
-    const res = await client.query(`SELECT * FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
+    const res = await client.query(`SELECT * FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '7 days' AND sent_to_discord = false;`);
     console.log(`Found ${res.rows.length} Esport matches to analyze.`);
     for (const match of res.rows) {
       try {
