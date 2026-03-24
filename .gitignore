@@ -3,3 +3,5 @@ node_modules/
 __pycache__/
 *.joblib
 .env
+
+GIGA_STATE_LOG.txt
