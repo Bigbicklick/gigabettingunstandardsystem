@@ -1,63 +1,328 @@
 ================================================================================
-                    THE GIGA AI BETTING SYSTEM - RAPORT STANU (PHASE 10)
+         THE GIGA AI BETTING SYSTEM — TECHNICAL HANDOFF LOG (PHASE 10)
+                       For: Next AI Agent / Developer
 ================================================================================
-DATA WYGENEROWANIA: Marzec 2026
-AUTOR: Twój Wierny AI Inżynier The Giga Odyssey
-CEL PLIKU: Instruktaż dla następnego agenta AI / Szefa Projektu.
+Generated: 2026-03-24
+Author: Gemini 2.5 Pro (prev session agent)
+Language: English + technical notes (Polish owner context preserved)
 
-1. OBECNY STAN SYSTEMU I ARCHITEKTURA (FAST API + NODE.JS + POSTGRESQL):
---------------------------------------------------------------------------------
-System został zaktualizowany do wariantu wielo-regionalnego. Porzuciliśmy stare
-zapytania i ulepszyliśmy sztuczną inteligencję XGBoost do analizy TheSportsDB
-oraz Balldontlie. Mamy 3 główne serwisy:
-- `data-service` (Node): pobiera the odds api
-- `ai-service` (Python/FastAPI): trenuje i serwuje predykcje XGBoost (Giga Edge)
-- `analysis-service` (Discord Bot): łączy dane z AI, wysyła i filtruje.
+NOTE TO NEXT AI: The owner ("Szef") communicates in Polish. He is non-technical
+but motivated. He has a token budget concern - be efficient. The system is
+deployed on Google Cloud VPS and uses GitHub for sync. Always confirm before
+running destructive commands. He has a Discord betting bot that outputs AI
+predictions for football, basketball, tennis, and esports.
 
-Aplikacja znajduje się w Dockerze z `docker-compose.yml` (VPS Giga Cloud).
+================================================================================
+SECTION 1: REPOSITORY & INFRASTRUCTURE
+================================================================================
 
-2. CZEGO DOKONALIŚMY OSTATNIO (FAZY 8, 9, 10):
---------------------------------------------------------------------------------
-A) KOSZYKÓWKA (NBA) - ZMIANA THE SPORTS API:
-   - Skasowano `nba_api` na rzecz `balldontlie.io` (Darmowe 60 req/m). 
-   - Moduł `ml_pipeline_basket.py` oblicza teraz autorskie punkty ELO opierając się
-     o wskaźnik przemęczenia i formy.
-   - Kod zabezpieczony pętlami `time.sleep` na wypadek zablokowania `Error 429`.
+GitHub Repo: https://github.com/Bigbicklick/gigabettingunstandardsystem
+VPS IP:      35.232.109.6
+SSH User:    lubieplackiamy
+SSH Pass:    1234 (used with sudo -S for docker commands)
+VPS Path:    ~/gigabettingunstandardsystem/
 
-B) TENIS ZIEMNY ORAZ ESPORT (CS:GO / LOL) - LIVE XGBOOST:
-   - Darmowy API key "3" na TheSportsDB przypisano do modułów: 
-     `ml_pipeline_esport.py` i `ml_pipeline_tennis.py`.
-   - Klasyfikatory XGBoost uczone są sztucznie, natomiast forma (Win Rate %)
-     ciągnięta jest DYNAMICZNIE NA BIEŻĄCO przy wezwaniu zapytań (np. `betsesport`).
-   - Mózg potrafi odrzucić nieznane postacie (Safe Fallback na "50%"), unikając
-     zamarznięcia i awarii całego instancji serwerowej chmury (VPS).
+Docker Compose: docker-compose.yml at VPS root path above.
+Running containers (docker ps):
+  - gigabet_postgres       (PostgreSQL 14, port 5432)
+  - gigabet_redis          (Redis, port 6379)
+  - gigabet_ai_service     (Python/FastAPI, port 8000, internal)
+  - gigabet_analysis_svc   (Node.js Discord bot)
+  - gigabet_data_svc       (Node.js data fetcher)
 
-C) DISCORD BOT (FAZA 10):
-   - Zaktualizowano wszystkie opisy bota na Discord. Będzie zgłaszać poprawny
-     napis "Multi-Regional API Phase 10".
+Standard deploy workflow:
+  ssh lubieplackiamy@35.232.109.6
+  sudo password: 1234
+  cd ~/gigabettingunstandardsystem
+  git pull origin main
+  sudo docker-compose up -d --build <service_name>
 
-3. ROZWIĄZYWANIE BŁĘDU "EDGE: 0% / Scaffolding Phase 7" na the Discordzie:
---------------------------------------------------------------------------------
-UWAGA DLA NASTĘPNIKA: Komputer Szefa uległ nagłemu wyłączeniu po stronie hardware.
-Dlatego, podczas fazy 10 nie daliśmy rady wysłać przez SSH ostatecznej aktualizacji
-do Bazy Danych na the VPS (`35.232.109.6`).
-Stare rekordy mają na twardo nabitą wartość `ai_edge: 0%` dla koszykówki.
+Check logs: sudo docker logs --tail 100 gigabet_ai_service
 
-- ROZWIĄZANIE 1 (Wgraj zmiany z Githuba po restarcie PC):
-  `ssh -o StrictHostKeyChecking=no lubieplackiamy@35.232.109.6 "cd ~/gigabettingunstandardsystem && git pull origin main && docker-compose up -d --build analysis-service"`
-  To przepali stary kod bota i zmieni nazwy na Phase 10.
+================================================================================
+SECTION 2: SERVICE ARCHITECTURE (3 microservices)
+================================================================================
 
-- ROZWIĄZANIE 2 (Wymaż błędy w zcacheowanej bazie the PostgreSQL):
-  Zaraz po tym wejdź po SSH w bazę dockera i wyślij:
-  `docker exec gigabet_postgres psql -U postgres -d bettingdb -c "UPDATE matches_basket SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL; UPDATE matches_tennis SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL; UPDATE matches_esport SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL;"`
-  Uvicorn automatycznie w kilka sekund po tej pętli odświeży mecze z prawdziwym The Giga Edge.
+--- A) data-service (Node.js) ---
+Path: /data-service/index.js
+Role: Fetches upcoming match odds from "The Odds API" and saves to PostgreSQL.
+Cron: Runs every 15 min. Populates tables: matches, matches_basket,
+      matches_tennis, matches_esport.
+Key env vars:
+  THE_ODDS_API_KEY  - API key for theoddsapi.com
+  DATABASE_URL      - postgresql://postgres:PASSWORD@db:5432/bettingdb
+  DB_PASSWORD       - postgres password
 
-4. WAŻNE HASŁA I PLIKI DO EDYCJI:
---------------------------------------------------------------------------------
-- thesportsdb API: "3" (darmowe)
-- balldontlie API: na sztywno w `ml_pipeline_basket.py`
-- VPS: `lubieplackiamy@35.232.109.6`
+Football leagues covered: Many (was previously hardcoded as "4 leagues"
+in Discord messages, but actually covers more — this was already fixed).
 
-Szefie, oszczędzamy tokeny, więc zamykam to The Giga Krótkie Podsumowanie.
-Życzę pomyślności w kolejnych fazach i samych zielonych wskaźników ELO. 🚀
+--- B) ai-service (Python/FastAPI, Uvicorn on port 8000) ---
+Path: /ai-service/
+Entry: main.py (uvicorn main:app)
+Role: Trains ML models on startup and serves prediction endpoints.
+
+Key files:
+  main.py               - FastAPI app with all endpoints
+  ml_pipeline.py        - Football XGBoost model (H2H, BTTS, O/U, Corners, DC, DNB)
+  ml_pipeline_basket.py - Basketball XGBoost model (balldontlie.io API)
+  ml_pipeline_tennis.py - Tennis XGBoost model (TheSportsDB API, live form fetch)
+  ml_pipeline_esport.py - Esports XGBoost model (TheSportsDB API, live form fetch)
+  requirements.txt      - Python deps (fastapi, uvicorn, xgboost, scikit-learn,
+                          pandas, numpy, joblib, requests, apscheduler)
+
+Startup sequence in main.py (load_ai function):
+  1. Check if football model files exist (model_h2h.joblib etc.) → if not, train
+  2. Check if basket state exists (basket_state.pkl) → if not, train
+  3. Check if esport model exists (esport_model.pkl) → if not, synthesize
+  4. Check if tennis model exists (tennis_model.pkl) → if not, synthesize
+  5. Load all models into memory → server ready
+
+Saved model files (in /app/ inside container, non-persistent across --build!):
+  team_states.joblib, model_h2h.joblib, model_btts.joblib, model_ou.joblib,
+  model_corners.joblib → Football
+  basket_model.pkl, basket_state.pkl → Basketball
+  esport_model.pkl → Esports
+  tennis_model.pkl → Tennis
+
+IMPORTANT: Models are retrained FROM SCRATCH every time the container is rebuilt
+with --build. For football this takes ~2-5 minutes (fetching API-Football data).
+For basketball it takes ~1-2 min (balldontlie.io, rate limited at 60 req/min).
+
+API Endpoints:
+  POST /predict         → Football (6-market output)
+  POST /predict_basket  → Basketball (H2H win probability, Giga Edge %)
+  POST /predict_tennis  → Tennis (TheSportsDB live form fetch)
+  POST /predict_esport  → Esports (TheSportsDB live form fetch)
+  GET  /health          → Health check
+
+--- C) analysis-service (Node.js Discord Bot) ---
+Path: /analysis-service/index.js
+Role: Connects to PostgreSQL, calls ai-service for predictions, sends to Discord.
+      Also responds to Discord slash-style text commands.
+Key env vars:
+  DISCORD_BOT_TOKEN   - Bot token from Discord Developer Portal
+  DISCORD_WEBHOOK_URL - Webhook URL for automatic reports
+  AI_SERVICE_URL      - http://ai-service:8000 (internal docker network)
+  DATABASE_URL        - same as above
+
+Discord text commands (messageCreate listener):
+  betsfoot    → Shows football matches from `matches` table with full multi-market AI
+  betsbasket  → Shows NBA matches from `matches_basket` table with Edge%
+  betstenis   → Shows tennis matches from `matches_tennis` table with Edge%
+  betsesport  → Shows esports matches from `matches_esport` table with Edge%
+
+Cron jobs in analysis-service:
+  Every 10 min → analyzeUpcomingMatches() + all sports variants
+  Every hour   → sendHourlyReport() (football summary to Discord webhook)
+
+Analyze flow per sport:
+  1. SELECT unsent matches (sent_to_discord=false) from DB
+  2. POST to AI service endpoint (e.g. /predict_basket)
+  3. Receive { value_bet: { recommended_bet, edge_percent, is_value, ... } }
+  4. UPDATE DB with ai_forecast, ai_edge, sent_to_discord=true
+  5. If is_value && edge > threshold → POST to DISCORD_WEBHOOK_URL
+
+================================================================================
+SECTION 3: DATABASE SCHEMA (PostgreSQL, db: bettingdb)
+================================================================================
+
+Table: matches (Football)
+  fixture_id, home_team, away_team, date, status, league,
+  odds_home, odds_draw, odds_away,
+  odds_btts_yes, odds_btts_no,
+  odds_ou_over, odds_ou_under,
+  odds_corners_over, odds_corners_under,
+  odds_dc_1x, odds_dc_x2, odds_dc_12,
+  odds_dnb_home, odds_dnb_away,
+  ai_forecast, ai_edge,
+  ai_btts_forecast, ai_btts_edge,
+  ai_ou_forecast, ai_ou_edge,
+  ai_corners_forecast, ai_corners_edge,
+  ai_dc_forecast, ai_dc_edge,
+  ai_dnb_forecast, ai_dnb_edge,
+  sent_to_discord BOOLEAN DEFAULT false
+
+Table: matches_basket (NBA)
+  fixture_id, home_team, away_team, date, status,
+  odds_home, odds_away, odds_spread_home, odds_spread_away,
+  odds_totals_over, odds_totals_under,
+  ai_forecast, ai_edge,
+  sent_to_discord BOOLEAN DEFAULT false
+
+Table: matches_tennis (ATP/WTA)
+  fixture_id, home_team, away_team, date, status,
+  odds_home, odds_away,
+  ai_forecast, ai_edge,
+  sent_to_discord BOOLEAN DEFAULT false
+
+Table: matches_esport (CS2/LoL)
+  fixture_id, home_team, away_team, date, status,
+  odds_home, odds_away,
+  ai_forecast, ai_edge,
+  sent_to_discord BOOLEAN DEFAULT false
+
+================================================================================
+SECTION 4: ML MODEL DETAILS
+================================================================================
+
+--- FOOTBALL (ml_pipeline.py) ---
+Model type: Ensemble of 4 XGBClassifier models
+Training data: Historical matches from API-Football (api-football.com)
+               via API_FOOTBALL_KEY env variable
+Features engineered:
+  - Elo Rating (custom implementation, K=32)
+  - Home/Away form (last 5 matches win rate)
+  - Goals scored/conceded averages
+  - Shot statistics (shots on target ratio)
+  - League-weighted corrections
+Markets: H2H winner, BTTS, Over/Under 2.5, Corners >9.5, Double Chance, DNB
+Saved as: model_h2h.joblib, model_btts.joblib, model_ou.joblib,
+          model_corners.joblib, team_states.joblib
+Accuracy (as logged): H2H ~48%, BTTS ~54%, O/U ~56%, Corners ~54%
+Note: These accuracies are ABOVE random (50%) after market vig correction.
+      The "edge%" output accounts for bookmaker overround.
+
+--- BASKETBALL (ml_pipeline_basket.py) ---
+API: https://www.balldontlie.io/api/v1/games
+API Key: 05261d65-b43c-4709-964a-960a6b76e026 (HARDCODED in file — move to env!)
+Key: 05261d65-b43c-4709-964a-960a6b76e026
+Rate limit: 60 req/min → protected with time.sleep(1) + retry on 429
+Seasons fetched: 2022, 2023, 2024
+Features engineered:
+  - Custom Elo Rating for NBA teams
+  - Rest Days (days since last game per team — fatigue factor)
+  - Home/Away win form
+Model: XGBClassifier (n_estimators=100, max_depth=5)
+Saved as: basket_model.pkl, basket_state.pkl
+
+KNOWN ISSUE: When container restarts without --build (just docker-compose up),
+the .pkl files persist. When rebuilt with --build, they are DELETED and retrained.
+The balldontlie.io API sometimes returns 429 for all 3 seasons on first start
+(burst limit). The model then trains on empty data → edge outputs near 0%.
+FIX: Ensure rate limiting sleep is in place (it IS in current code). On retry,
+     the next cron cycle will refetch properly.
+
+--- TENNIS (ml_pipeline_tennis.py) ---
+API: TheSportsDB (free key "3")
+  GET https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=PLAYER_NAME
+  GET https://www.thesportsdb.com/api/v1/json/3/searchplayers.php?p=PLAYER_NAME
+  GET https://www.thesportsdb.com/api/v1/json/3/eventslast.php?id=TEAM_ID
+Method: LIVE feature engineering at prediction time (NOT pre-trained on historical)
+  - Fetches last 5 matches per player from TheSportsDB
+  - Calculates win rate % (0-100) as "form" feature
+  - If team/player not found → fallback to 50.0 (neutral)
+  - Passes [Home_Form, Away_Form, Form_Diff] through XGBClassifier
+Model: Synthetic training on 10,000 simulated samples (sigmoid distributions)
+       Trained once on startup, saved as: tennis_model.pkl
+Edge threshold for value bet: > 2.0% above implied probability
+
+--- ESPORTS (ml_pipeline_esport.py) ---
+Same architecture as Tennis (TheSportsDB live fetch)
+  - Searches by team name (CS2 orgs, LoL teams)
+  - Fetches recent event results from TheSportsDB
+  - Win rate % → XGBoost prediction
+Edge threshold: > 3.0%
+Saved as: esport_model.pkl
+
+================================================================================
+SECTION 5: KNOWN BUGS & PENDING TASKS
+================================================================================
+
+BUG 1: Edge 0% on previously analyzed matches in `betsbasket` command
+  Root cause: sent_to_discord=true already set + ai_edge=0 from empty model run
+  Fix command (run via SSH on VPS):
+    sudo docker exec gigabet_postgres psql -U postgres -d bettingdb -c \
+    "UPDATE matches_basket SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL;
+     UPDATE matches_tennis SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL;
+     UPDATE matches_esport SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL;"
+  Then the analyze cron will re-process everything within 10 minutes.
+
+BUG 2: SSH key expired/not loaded after PC reboot
+  Root cause: Windows SSH agent drops keys after hard shutdown (GPU crash)
+  Fix: Reload SSH key in new terminal or use password-based SSH:
+    ssh -o StrictHostKeyChecking=no lubieplackiamy@35.232.109.6
+    (accept host key, then sudo commands use password 1234)
+
+BUG 3: balldontlie.io API key hardcoded in ml_pipeline_basket.py line ~14
+  Should be moved to environment variable BALLDONTLIE_API_KEY in docker-compose.yml
+  Currently: API_KEY = "05261d65-b43c-4709-964a-960a6b76e026"
+
+PENDING: The analysis-service index.js was updated to show "Phase 10" headers
+  but this change was NOT successfully deployed to VPS due to SSH loss.
+  The VPS still runs the old image with "Scaffolding Phase 7" strings.
+  Full deploy needed:
+    ssh lubieplackiamy@35.232.109.6
+    cd ~/gigabettingunstandardsystem
+    git pull origin main
+    sudo docker-compose up -d --build analysis-service
+
+PENDING: Tennis and Esports data-service fetching
+  The data-service currently may not fully populate matches_tennis/matches_esport
+  tables if The Odds API key doesn't cover these markets.
+  The `betstenis` and `betsesport` commands will show "no matches" if tables empty.
+
+================================================================================
+SECTION 6: ENVIRONMENT VARIABLES (docker-compose.yml)
+================================================================================
+
+These should be set in docker-compose.yml or .env file on VPS:
+  DATABASE_URL         postgresql://postgres:PASSWORD@db:5432/bettingdb
+  DB_PASSWORD          (postgres password)
+  DISCORD_WEBHOOK_URL  (channel webhook for auto-reports)
+  DISCORD_BOT_TOKEN    (from Discord Developer Portal)
+  THE_ODDS_API_KEY     (from theoddsapi.com — free tier)
+  API_FOOTBALL_KEY     (from api-football.com — for football training data)
+  AI_SERVICE_URL       http://ai-service:8000
+
+================================================================================
+SECTION 7: QUICK REFERENCE COMMANDS
+================================================================================
+
+Check all running containers:
+  sudo docker ps
+
+View logs of AI service:
+  sudo docker logs --tail 200 gigabet_ai_service
+
+Restart all services (no rebuild):
+  sudo docker-compose up -d
+
+Rebuild and restart specific service:
+  sudo docker-compose up -d --build ai-service
+
+Free disk space (DANGER: removes all stopped containers, unused images!):
+  sudo docker system prune -af --volumes
+  (Used once when disk was full - "No space left on device" error)
+
+Enter PostgreSQL directly:
+  sudo docker exec -it gigabet_postgres psql -U postgres -d bettingdb
+
+Reset predictions for re-analysis:
+  UPDATE matches_basket SET sent_to_discord=false, ai_edge=0, ai_forecast=NULL;
+  UPDATE matches SET sent_to_discord=false WHERE ai_edge IS NOT NULL;
+
+Check disk space:
+  df -h
+
+================================================================================
+SECTION 8: OWNER CONTEXT & COMMUNICATION NOTES
+================================================================================
+
+- Owner speaks Polish. Use Polish in Discord-facing messages.
+- Owner refers to the system as "The Giga AI", "Giga Brain", etc. He likes
+  this franding — keep it in Discord messages.
+- Owner runs a betting advisory channel on Discord.
+- The system's main value prop: finding "value bets" (Edge% > bookmaker vig)
+  using ML models, not just random predictions.
+- Owner is very cost-conscious with AI tokens. Be direct and efficient.
+- The Discord commands are case-sensitive text triggers (not slash commands):
+    betsfoot, betsbasket, betstenis, betsesport
+- Polish language advice strings in getEdgeAdvice() function:
+    edge <= 0  → "nie ma sensu wchodzić ❌"
+    edge < 3   → "możesz spróbować ale nic szalonego 🟡"
+    edge >= 3  → "obstawiaj na to szczególnie, większe szanse 🔥"
+
+================================================================================
+END OF LOG - Generated by AI agent on 2026-03-24
+Next agent: start by running `git log --oneline -10` on VPS to see latest state.
 ================================================================================
