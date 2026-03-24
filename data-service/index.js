@@ -385,71 +385,108 @@ async function fetchUpcomingBasketballMatches() {
 async function fetchUpcomingTennisMatches() {
   const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
   if (!ODDS_API_KEY) return;
-  console.log('Connecting to The Odds API for Tennis ATP...');
+  console.log('Discovering active Tennis tournaments from The Odds API...');
   try {
-    const res = await axios.get('https://api.the-odds-api.com/v4/sports/tennis_atp/odds/', {
-      params: { apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
+    // Step 1: Get all sports and filter for Tennis group
+    const sportsRes = await axios.get('https://api.the-odds-api.com/v4/sports', {
+      params: { apiKey: ODDS_API_KEY }
     });
-    const client = await pool.connect();
-    let saved = 0;
-    for (const match of res.data) {
-      if (new Date(match.commence_time) < new Date()) continue;
-      let oH = null, oA = null;
-      if (match.bookmakers && match.bookmakers.length > 0) {
-        const h2h = match.bookmakers[0].markets.find(m => m.key === 'h2h');
-        if (h2h && h2h.outcomes) {
-           const hOut = h2h.outcomes.find(o => o.name === match.home_team);
-           const aOut = h2h.outcomes.find(o => o.name === match.away_team);
-           if (hOut) oH = hOut.price;
-           if (aOut) oA = aOut.price;
-        }
-      }
-      try {
-        await client.query(`
-          INSERT INTO matches_tennis (fixture_id, home_team, away_team, date, status, odds_home, odds_away) 
-          VALUES ($1, $2, $3, $4, 'NS', $5, $6) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
-        `, [`ten_${match.id}`, match.home_team, match.away_team, match.commence_time, oH, oA]);
-        saved++;
-      } catch (e) { console.error('DB write error Tennis:', e.message); }
+    const tennisSports = sportsRes.data.filter(s => s.group === 'Tennis' && s.active);
+    
+    if (tennisSports.length === 0) {
+      console.log('No active Tennis tournaments found in The Odds API right now.');
+      return;
     }
-    console.log(`Saved ${saved} upcoming Tennis ATP matches.`);
+    console.log(`Found ${tennisSports.length} active Tennis tournaments: ${tennisSports.map(s => s.title).join(', ')}`);
+
+    const client = await pool.connect();
+    let totalSaved = 0;
+
+    // Step 2: Fetch odds from each active tournament
+    for (const sport of tennisSports) {
+      try {
+        const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${sport.key}/odds/`, {
+          params: { apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
+        });
+        
+        if (!res.data || !Array.isArray(res.data)) continue;
+        
+        for (const match of res.data) {
+          if (new Date(match.commence_time) < new Date()) continue;
+          let oH = null, oA = null;
+          if (match.bookmakers && match.bookmakers.length > 0) {
+            const h2h = match.bookmakers[0].markets.find(m => m.key === 'h2h');
+            if (h2h && h2h.outcomes) {
+              const hOut = h2h.outcomes.find(o => o.name === match.home_team);
+              const aOut = h2h.outcomes.find(o => o.name === match.away_team);
+              if (hOut) oH = hOut.price;
+              if (aOut) oA = aOut.price;
+            }
+          }
+          try {
+            await client.query(`
+              INSERT INTO matches_tennis (fixture_id, home_team, away_team, date, status, odds_home, odds_away) 
+              VALUES ($1, $2, $3, $4, 'NS', $5, $6) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
+            `, [`ten_${match.id}`, match.home_team, match.away_team, match.commence_time, oH, oA]);
+            totalSaved++;
+          } catch (e) { console.error('DB write error Tennis:', e.message); }
+        }
+        console.log(`  -> ${sport.title}: fetched matches OK`);
+      } catch (tournamentErr) {
+        console.error(`  -> ${sport.title}: error fetching odds:`, tournamentErr.message);
+      }
+    }
+    console.log(`Saved ${totalSaved} upcoming Tennis matches across all tournaments.`);
     client.release();
-  } catch (e) { console.error('Error fetching Tennis data:', e.message); }
+  } catch (e) { console.error('Error fetching Tennis sports list:', e.message); }
 }
 
 async function fetchUpcomingEsportsMatches() {
-  const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
-  if (!ODDS_API_KEY) return;
-  console.log('Connecting to The Odds API for Esports CS:GO...');
-  try {
-    const res = await axios.get('https://api.the-odds-api.com/v4/sports/esports_csgo/odds/', {
-      params: { apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
-    });
-    const client = await pool.connect();
-    let saved = 0;
-    for (const match of res.data) {
-      if (new Date(match.commence_time) < new Date()) continue;
-      let oH = null, oA = null;
-      if (match.bookmakers && match.bookmakers.length > 0) {
-        const h2h = match.bookmakers[0].markets.find(m => m.key === 'h2h');
-        if (h2h && h2h.outcomes) {
-           const hOut = h2h.outcomes.find(o => o.name === match.home_team);
-           const aOut = h2h.outcomes.find(o => o.name === match.away_team);
-           if (hOut) oH = hOut.price;
-           if (aOut) oA = aOut.price;
-        }
+  // The Odds API does NOT support esports - using TheSportsDB (free, key "3") instead
+  console.log('Fetching upcoming Esports events from TheSportsDB...');
+  const THESPORTSDB_KEY = '3';
+  const esportLeagues = [
+    { id: '4770', name: 'CS2 (ESL Pro League)' },
+    { id: '4771', name: 'CS2 (BLAST Premier)' },
+    { id: '4772', name: 'LoL (LEC)' },
+    { id: '4773', name: 'LoL (LCS)' },
+    { id: '4574', name: 'League of Legends World Championship' },
+    { id: '4752', name: 'CS:GO Major' },
+  ];
+
+  const client = await pool.connect();
+  let totalSaved = 0;
+
+  for (const league of esportLeagues) {
+    try {
+      const res = await axios.get(`https://www.thesportsdb.com/api/v1/json/${THESPORTSDB_KEY}/eventsnextleague.php`, {
+        params: { id: league.id }
+      });
+
+      if (!res.data || !res.data.events) continue;
+
+      for (const event of res.data.events) {
+        const homeTeam = event.strHomeTeam || 'TBD';
+        const awayTeam = event.strAwayTeam || 'TBD';
+        const eventDate = event.strTimestamp || event.dateEvent || new Date().toISOString();
+        const fixtureId = `esp_tsdb_${event.idEvent}`;
+
+        try {
+          await client.query(`
+            INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_away) 
+            VALUES ($1, $2, $3, $4, $5, 'NS', NULL, NULL) ON CONFLICT (fixture_id) DO NOTHING
+          `, [fixtureId, league.name, homeTeam, awayTeam, eventDate]);
+          totalSaved++;
+        } catch (e) { console.error('DB write error Esport:', e.message); }
       }
-      try {
-        await client.query(`
-          INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_away) 
-          VALUES ($1, $2, $3, $4, $5, 'NS', $6, $7) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
-        `, [`esp_${match.id}`, 'CS:GO', match.home_team, match.away_team, match.commence_time, oH, oA]);
-        saved++;
-      } catch (e) { console.error('DB write error Esport:', e.message); }
+      console.log(`  -> ${league.name}: fetched events OK`);
+    } catch (e) {
+      // TheSportsDB may not have events for some league IDs - that's OK
+      console.log(`  -> ${league.name}: no events or error (${e.message})`);
     }
-    console.log(`Saved ${saved} upcoming Esports CS:GO matches.`);
-    client.release();
-  } catch (e) { console.error('Error fetching Esport data:', e.message); }
+  }
+  console.log(`Saved ${totalSaved} upcoming Esports events from TheSportsDB.`);
+  client.release();
 }
 
 
