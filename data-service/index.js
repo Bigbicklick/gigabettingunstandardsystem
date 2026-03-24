@@ -24,12 +24,85 @@ async function initDB() {
         odds_home DECIMAL,
         odds_draw DECIMAL,
         odds_away DECIMAL,
+        odds_btts_yes DECIMAL,
+        odds_btts_no DECIMAL,
+        odds_ou_over DECIMAL,
+        odds_ou_under DECIMAL,
+        odds_corners_over DECIMAL,
+        odds_corners_under DECIMAL,
+        odds_dc_1x DECIMAL,
+        odds_dc_x2 DECIMAL,
+        odds_dc_12 DECIMAL,
+        odds_dnb_home DECIMAL,
+        odds_dnb_away DECIMAL,
+        ai_forecast VARCHAR(50) DEFAULT NULL,
+        ai_edge DECIMAL DEFAULT NULL,
+        ai_btts_forecast VARCHAR(50) DEFAULT NULL,
+        ai_btts_edge DECIMAL DEFAULT NULL,
+        ai_ou_forecast VARCHAR(50) DEFAULT NULL,
+        ai_ou_edge DECIMAL DEFAULT NULL,
+        ai_corners_forecast VARCHAR(50) DEFAULT NULL,
+        ai_corners_edge DECIMAL DEFAULT NULL,
+        ai_dc_forecast VARCHAR(50) DEFAULT NULL,
+        ai_dc_edge DECIMAL DEFAULT NULL,
+        ai_dnb_forecast VARCHAR(50) DEFAULT NULL,
+        ai_dnb_edge DECIMAL DEFAULT NULL,
+        sent_to_discord BOOLEAN DEFAULT false
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS matches_basket (
+        fixture_id VARCHAR(100) PRIMARY KEY,
+        league_name VARCHAR(100),
+        home_team VARCHAR(100),
+        away_team VARCHAR(100),
+        date TIMESTAMP,
+        status VARCHAR(50) DEFAULT 'NS',
+        odds_home DECIMAL,
+        odds_away DECIMAL,
+        odds_spread_home DECIMAL,
+        odds_spread_away DECIMAL,
+        odds_totals_over DECIMAL,
+        odds_totals_under DECIMAL,
         ai_forecast VARCHAR(50) DEFAULT NULL,
         ai_edge DECIMAL DEFAULT NULL,
         sent_to_discord BOOLEAN DEFAULT false
       );
     `);
-    console.log('Database initialized successfully.');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS matches_tennis (
+        fixture_id VARCHAR(100) PRIMARY KEY,
+        home_team VARCHAR(100),
+        away_team VARCHAR(100),
+        date TIMESTAMP,
+        status VARCHAR(50) DEFAULT 'NS',
+        odds_home DECIMAL,
+        odds_away DECIMAL,
+        ai_forecast VARCHAR(50) DEFAULT NULL,
+        ai_edge DECIMAL DEFAULT NULL,
+        sent_to_discord BOOLEAN DEFAULT false
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS matches_esport (
+        fixture_id VARCHAR(100) PRIMARY KEY,
+        league_name VARCHAR(100),
+        home_team VARCHAR(100),
+        away_team VARCHAR(100),
+        date TIMESTAMP,
+        status VARCHAR(50) DEFAULT 'NS',
+        odds_home DECIMAL,
+        odds_away DECIMAL,
+        ai_forecast VARCHAR(50) DEFAULT NULL,
+        ai_edge DECIMAL DEFAULT NULL,
+        sent_to_discord BOOLEAN DEFAULT false
+      );
+    `);
+
+    console.log('All 4 tables initialized successfully (matches, matches_basket, matches_tennis, matches_esport).');
   } catch (err) {
     console.error('Error initializing db', err);
   } finally {
@@ -333,15 +406,15 @@ async function fetchUpcomingTennisMatches() {
       }
       try {
         await client.query(`
-          INSERT INTO matches_tennis (fixture_id, home_team, away_team, date, odds_home, odds_away) 
-          VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
+          INSERT INTO matches_tennis (fixture_id, home_team, away_team, date, status, odds_home, odds_away) 
+          VALUES ($1, $2, $3, $4, 'NS', $5, $6) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
         `, [`ten_${match.id}`, match.home_team, match.away_team, match.commence_time, oH, oA]);
         saved++;
-      } catch (e) {}
+      } catch (e) { console.error('DB write error Tennis:', e.message); }
     }
     console.log(`Saved ${saved} upcoming Tennis ATP matches.`);
     client.release();
-  } catch (e) {}
+  } catch (e) { console.error('Error fetching Tennis data:', e.message); }
 }
 
 async function fetchUpcomingEsportsMatches() {
@@ -368,15 +441,15 @@ async function fetchUpcomingEsportsMatches() {
       }
       try {
         await client.query(`
-          INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, odds_home, odds_away) 
-          VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
+          INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_away) 
+          VALUES ($1, $2, $3, $4, $5, 'NS', $6, $7) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
         `, [`esp_${match.id}`, 'CS:GO', match.home_team, match.away_team, match.commence_time, oH, oA]);
         saved++;
-      } catch (e) {}
+      } catch (e) { console.error('DB write error Esport:', e.message); }
     }
     console.log(`Saved ${saved} upcoming Esports CS:GO matches.`);
     client.release();
-  } catch (e) {}
+  } catch (e) { console.error('Error fetching Esport data:', e.message); }
 }
 
 

@@ -524,32 +524,40 @@ async function analyzeUpcomingBasketMatches() {
 }
 
 async function analyzeUpcomingTennisMatches() {
+  console.log('Running analysis on upcoming Tennis matches...');
   const client = await pool.connect();
   try {
     const res = await client.query(`SELECT * FROM matches_tennis WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
+    console.log(`Found ${res.rows.length} Tennis matches to analyze.`);
     for (const match of res.rows) {
       try {
         const ar = await axios.post(`${AI_SERVICE_URL}/predict_tennis`, { home_team: match.home_team, away_team: match.away_team, odds_home: typeof match.odds_home !== 'undefined' ? parseFloat(match.odds_home) : null, odds_away: typeof match.odds_away !== 'undefined' ? parseFloat(match.odds_away) : null });
         const pred = ar.data.value_bet;
         await client.query(`UPDATE matches_tennis SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2 WHERE fixture_id = $3`, [pred.recommended_bet, pred.edge_percent, match.fixture_id]);
-      } catch (e) {}
+        console.log(`Tennis: ${match.home_team} vs ${match.away_team} -> ${pred.recommended_bet} (Edge: ${pred.edge_percent}%)`);
+      } catch (e) { console.error(`Error analyzing Tennis match ${match.fixture_id}:`, e.message); }
     }
   } catch (e) {
+    console.error('Error in Tennis analyze function:', e.message);
   } finally { client.release(); }
 }
 
 async function analyzeUpcomingEsportsMatches() {
+  console.log('Running analysis on upcoming Esports matches...');
   const client = await pool.connect();
   try {
     const res = await client.query(`SELECT * FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
+    console.log(`Found ${res.rows.length} Esport matches to analyze.`);
     for (const match of res.rows) {
       try {
         const ar = await axios.post(`${AI_SERVICE_URL}/predict_esport`, { home_team: match.home_team, away_team: match.away_team, odds_home: typeof match.odds_home !== 'undefined' ? parseFloat(match.odds_home) : null, odds_away: typeof match.odds_away !== 'undefined' ? parseFloat(match.odds_away) : null });
         const pred = ar.data.value_bet;
         await client.query(`UPDATE matches_esport SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2 WHERE fixture_id = $3`, [pred.recommended_bet, pred.edge_percent, match.fixture_id]);
-      } catch (e) {}
+        console.log(`Esport: ${match.home_team} vs ${match.away_team} -> ${pred.recommended_bet} (Edge: ${pred.edge_percent}%)`);
+      } catch (e) { console.error(`Error analyzing Esport match ${match.fixture_id}:`, e.message); }
     }
   } catch (e) {
+    console.error('Error in Esports analyze function:', e.message);
   } finally { client.release(); }
 }
 
