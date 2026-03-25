@@ -442,51 +442,8 @@ async function fetchUpcomingTennisMatches() {
 }
 
 async function fetchUpcomingEsportsMatches() {
-  // The Odds API does NOT support esports - using TheSportsDB (free, key "3") instead
-  console.log('Fetching upcoming Esports events from TheSportsDB...');
-  const THESPORTSDB_KEY = '3';
-  const esportLeagues = [
-    { id: '4770', name: 'CS2 (ESL Pro League)' },
-    { id: '4771', name: 'CS2 (BLAST Premier)' },
-    { id: '4772', name: 'LoL (LEC)' },
-    { id: '4773', name: 'LoL (LCS)' },
-    { id: '4574', name: 'League of Legends World Championship' },
-    { id: '4752', name: 'CS:GO Major' },
-  ];
-
-  const client = await pool.connect();
-  let totalSaved = 0;
-
-  for (const league of esportLeagues) {
-    try {
-      const res = await axios.get(`https://www.thesportsdb.com/api/v1/json/${THESPORTSDB_KEY}/eventsnextleague.php`, {
-        params: { id: league.id }
-      });
-
-      if (!res.data || !res.data.events) continue;
-
-      for (const event of res.data.events) {
-        const homeTeam = event.strHomeTeam || 'TBD';
-        const awayTeam = event.strAwayTeam || 'TBD';
-        const eventDate = event.strTimestamp || event.dateEvent || new Date().toISOString();
-        const fixtureId = `esp_tsdb_${event.idEvent}`;
-
-        try {
-          await client.query(`
-            INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_away) 
-            VALUES ($1, $2, $3, $4, $5, 'NS', NULL, NULL) ON CONFLICT (fixture_id) DO NOTHING
-          `, [fixtureId, league.name, homeTeam, awayTeam, eventDate]);
-          totalSaved++;
-        } catch (e) { console.error('DB write error Esport:', e.message); }
-      }
-      console.log(`  -> ${league.name}: fetched events OK`);
-    } catch (e) {
-      // TheSportsDB may not have events for some league IDs - that's OK
-      console.log(`  -> ${league.name}: no events or error (${e.message})`);
-    }
-  }
-  console.log(`Saved ${totalSaved} upcoming Esports events from TheSportsDB.`);
-  client.release();
+  console.log('Esports data currently suspended due to TheSportsDB API removing free esports endpoints. Waiting for alternate premium Esports provider.');
+  return;
 }
 
 
