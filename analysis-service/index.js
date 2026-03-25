@@ -39,12 +39,12 @@ discordClient.on('messageCreate', async (message) => {
         const res = await pgClient.query(`
           SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
           FROM matches 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
+          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
           AND ai_forecast IS NOT NULL
         `);
         
         if (res.rows.length === 0) {
-          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma żadnych zbuforowanych meczów na najbliższe 24h z Free Tierowym Edge'm.");
+          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma żadnych zbuforowanych meczów na najbliższe 48h z Free Tierowym Edge'm.");
         }
         
         let currentReport = "⚽ **AKTUALNE SKANOWANIE RYNKÓW NA ŻYCZENIE SZEFA** ⚽\n\n";
@@ -117,7 +117,7 @@ discordClient.on('messageCreate', async (message) => {
         const res = await pgClient.query(`
           SELECT home_team, away_team, odds_home, odds_away, odds_spread_home, odds_spread_away, odds_totals_over, ai_forecast, ai_edge
           FROM matches_basket 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+          WHERE date > NOW() AND date < NOW() + INTERVAL '7 days'
         `);
         
         if (res.rows.length === 0) {
@@ -166,7 +166,7 @@ discordClient.on('messageCreate', async (message) => {
           FROM matches_tennis 
           WHERE date > NOW() AND date < NOW() + INTERVAL '7 days'
         `);
-        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Tenisa (ATP) na najbliższe 48h.");
+        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Tenisa (ATP) na najbliższe 7 dni.");
         
         let cr = "🎾 **KURSOWY RAPORT TENIS [Multi-Regional ATP: Phase 10]** 🎾🔥\nTheSportsDB Live XGBoost Fetch\n\n";
         const payloads = [];
@@ -188,9 +188,9 @@ discordClient.on('messageCreate', async (message) => {
         const res = await pgClient.query(`
           SELECT home_team, away_team, odds_home, odds_away, ai_forecast, ai_edge
           FROM matches_esport 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+          WHERE date > NOW() AND date < NOW() + INTERVAL '7 days'
         `);
-        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Esportu (CS2/LoL) na najbliższe 48h.");
+        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Esportu (CS2/LoL) na najbliższe 7 dni.");
         
         let cr = "🎮 **KURSOWY RAPORT ESPORT [Multi-Regional: Phase 10]** 🎮🔥\nTheSportsDB Live AI Engine\n\n";
         const payloads = [];
@@ -218,14 +218,13 @@ async function analyzeUpcomingMatches() {
   const client = await pool.connect();
   
   try {
-    // Select matches that haven't started, are playing in the next 24h, have odds, and haven't been evaluated/sent
+    // Select matches that haven't started, are playing in the next 48h, have odds, and haven't been evaluated/sent
     const res = await client.query(`
-      SELECT * FROM matches 
-      WHERE date > NOW() 
-      AND date < NOW() + INTERVAL '24 hours'
-      AND sent_to_discord = false 
-      AND odds_home IS NOT NULL
-      AND status IN ('NS', 'TBD');
+       SELECT * FROM matches 
+       WHERE date > NOW() 
+       AND date < NOW() + INTERVAL '48 hours'
+       AND sent_to_discord = false 
+       AND odds_home IS NOT NULL;
     `);
     
     console.log(`Found ${res.rows.length} matches to analyze.`);
@@ -409,12 +408,12 @@ async function sendHourlyReport() {
     const res = await client.query(`
       SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
       FROM matches 
-      WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
+      WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
       AND ai_forecast IS NOT NULL
     `);
     
     if (res.rows.length === 0) {
-      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy piłkarskich do analizy na najbliższe 24h z 18 Giga Lig Europejskich." });
+      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy piłkarskich do analizy na najbliższe 48h z 18 Giga Lig Europejskich." });
       return;
     }
     
@@ -476,10 +475,9 @@ async function analyzeUpcomingBasketMatches() {
     const res = await client.query(`
       SELECT * FROM matches_basket 
       WHERE date > NOW() 
-      AND date < NOW() + INTERVAL '48 hours'
+      AND date < NOW() + INTERVAL '7 days'
       AND sent_to_discord = false 
-      AND odds_home IS NOT NULL
-      AND status IN ('NS', 'TBD');
+      AND odds_home IS NOT NULL;
     `);
     
     console.log(`Found ${res.rows.length} NBA matches to analyze.`);
@@ -527,7 +525,7 @@ async function analyzeUpcomingTennisMatches() {
   console.log('Running analysis on upcoming Tennis matches...');
   const client = await pool.connect();
   try {
-    const res = await client.query(`SELECT * FROM matches_tennis WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false;`);
+    const res = await client.query(`SELECT * FROM matches_tennis WHERE date > NOW() AND date < NOW() + INTERVAL '7 days' AND sent_to_discord = false;`);
     console.log(`Found ${res.rows.length} Tennis matches to analyze.`);
     for (const match of res.rows) {
       try {
@@ -580,7 +578,7 @@ function start() {
 
   // Run every hour at minute 0 for the summary report
   cron.schedule('0 * * * *', () => {
-    sendHourlyReport();
+    sendHourly report();
   });
   
   console.log('Analysis service scheduled to run every 10 minutes (Signals) and every 1 hour (Reports).');
