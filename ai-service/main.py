@@ -245,6 +245,16 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     p_draw = float(probs[1])
     p_away = float(probs[2])
     
+    # Calculate global confidence score (Scale 0-10) based on strongest prediction
+    confidence_score = float(max(p_home, p_draw, p_away) * 10)
+    
+    if confidence_score >= 7.5:
+        kelly_multiplier = 0.35 # Aggressive
+    elif confidence_score >= 6.0:
+        kelly_multiplier = 0.25 # Standard 1/4 Kelly
+    else:
+        kelly_multiplier = 0.15 # Conservative
+        
     # BTTS predictions
     probs_btts = model_btts.predict_proba(X)[0]
     p_btts_no = float(probs_btts[0])
@@ -305,7 +315,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kelly_fraction = (p * b - q) / b
             if kelly_fraction > 0:
-                recommended_stake = round((kelly_fraction * 0.25) * 100, 2)
+                recommended_stake = round((kelly_fraction * kelly_multiplier) * 100, 2)
 
     btts_value_bet = False
     btts_best_bet = None
@@ -343,7 +353,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kelly_fraction = (p * b - q) / b
             if kelly_fraction > 0:
-                btts_recommended_stake = round((kelly_fraction * 0.25) * 100, 2)
+                btts_recommended_stake = round((kelly_fraction * kelly_multiplier) * 100, 2)
                 
     # Over/Under value bet logic
     ou_value_bet = False
@@ -381,7 +391,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kf = (p * b - (1.0 - p)) / b
             if kf > 0:
-                ou_recommended_stake = round((kf * 0.25) * 100, 2)
+                ou_recommended_stake = round((kf * kelly_multiplier) * 100, 2)
 
     # Corners value bet logic
     cor_value_bet = False
@@ -416,7 +426,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kf = (p * b - (1.0 - p)) / b
             if kf > 0:
-                cor_recommended_stake = round((kf * 0.25) * 100, 2)
+                cor_recommended_stake = round((kf * kelly_multiplier) * 100, 2)
 
     dc_value_bet = False
     dc_best_bet = None
@@ -455,7 +465,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kf = (p * b - (1.0 - p)) / b
             if kf > 0:
-                dc_recommended_stake = round((kf * 0.25) * 100, 2)
+                dc_recommended_stake = round((kf * kelly_multiplier) * 100, 2)
 
     dnb_value_bet = False
     dnb_best_bet = None
@@ -494,9 +504,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kf = (p * b - (1.0 - p)) / b
             if kf > 0:
-                dnb_recommended_stake = round((kf * 0.25) * 100, 2)
-
-    confidence_score = float(max(p_home, p_draw, p_away) * 10) # 0 to 10
+                dnb_recommended_stake = round((kf * kelly_multiplier) * 100, 2)
     
     return {
         "match": f"{home} vs {away}",

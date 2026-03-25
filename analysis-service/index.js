@@ -270,7 +270,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${h2h.model_probability}%
 ✅ **VALUE BET EDGE**: ${h2h.edge_percent}%
 🧠 **CONFIDENCE**: ${h2h.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${h2h.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+💸 **SUGGESTED STAKE**: ${h2h.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msg.trim() });
         }
         
@@ -285,7 +285,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${btts.model_probability}%
 ✅ **VALUE BET EDGE**: ${btts.edge_percent}%
 🧠 **CONFIDENCE**: ${btts.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${btts.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+💸 **SUGGESTED STAKE**: ${btts.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgBtts.trim() });
         }
         
@@ -300,7 +300,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${ou.model_probability}%
 ✅ **VALUE BET EDGE**: ${ou.edge_percent}%
 🧠 **CONFIDENCE**: ${ou.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${ou.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+💸 **SUGGESTED STAKE**: ${ou.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgOu.trim() });
         }
         
@@ -315,7 +315,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${cor.model_probability}%
 ✅ **VALUE BET EDGE**: ${cor.edge_percent}%
 🧠 **CONFIDENCE**: ${cor.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${cor.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+💸 **SUGGESTED STAKE**: ${cor.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgCor.trim() });
         }
         
@@ -330,7 +330,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${dc.model_probability}%
 ✅ **VALUE BET EDGE**: ${dc.edge_percent}%
 🧠 **CONFIDENCE**: ${dc.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${dc.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+💸 **SUGGESTED STAKE**: ${dc.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgDc.trim() });
         }
         
@@ -345,7 +345,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${dnb.model_probability}%
 ✅ **VALUE BET EDGE**: ${dnb.edge_percent}%
 🧠 **CONFIDENCE**: ${dnb.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${dnb.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
+💸 **SUGGESTED STAKE**: ${dnb.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgDnb.trim() });
         }
         
