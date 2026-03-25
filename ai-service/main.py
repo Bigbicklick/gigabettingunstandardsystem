@@ -187,7 +187,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     home = req.home_team
     away = req.away_team
     
-    if home not in team_states or away not in team_states:
+    if team_states is None or home not in team_states or away not in team_states:
         # Fallback prediction based exclusively on bookmaker implied probabilities!
         i_home = calculate_implied_prob(req.odds_home) if req.odds_home else 0.33
         i_draw = calculate_implied_prob(req.odds_draw) if req.odds_draw else 0.33
