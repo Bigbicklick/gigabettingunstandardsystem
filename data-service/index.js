@@ -131,7 +131,8 @@ async function fetchUpcomingMatches() {
     135, 136,            // Wlochy
     140, 141,            // Hiszpania
     61, 62,              // Francja
-    88, 144, 94, 203, 197 // Holandia, Belgia, Portugalia, Turcja, Grecja
+    88, 144, 94, 203, 197, // Holandia, Belgia, Portugalia, Turcja, Grecja
+    2, 3, 4, 5, 10, 15, 34 // International & Cups: Champions/Europa League, Euro, Nations League, Friendlies, WC, WC Quali.
   ];
   
   try {
