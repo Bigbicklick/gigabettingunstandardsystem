@@ -188,49 +188,16 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     away = req.away_team
     
     if team_states is None or home not in team_states or away not in team_states:
-        # Fallback prediction based exclusively on bookmaker implied probabilities!
-        i_home = calculate_implied_prob(req.odds_home) if req.odds_home else 0.33
-        i_draw = calculate_implied_prob(req.odds_draw) if req.odds_draw else 0.33
-        i_away = calculate_implied_prob(req.odds_away) if req.odds_away else 0.33
-        
-        # normalization
-        total = i_home + i_draw + i_away
-        if total > 0:
-            i_home /= total
-            i_draw /= total
-            i_away /= total
-            
-        best = home if i_home > i_away else away
-        if i_draw > i_home and i_draw > i_away: best = "Draw"
-        
-        return {
-            "match": f"{home} vs {away}",
-            "raw_probabilities": {
-                "home": round(i_home * 100, 2),
-                "draw": round(i_draw * 100, 2),
-                "away": round(i_away * 100, 2),
-                "btts_yes": 0.0,
-                "btts_no": 0.0
-            },
-            "most_likely_outcome": best,
-            "value_bet": {
-                "is_value": False,
-                "recommended_bet": best,
-                "edge_percent": -5000,
-                "model_probability": round(max(i_home, i_draw, i_away) * 100, 2),
-                "bookmaker_odds": req.odds_home if best == home else req.odds_away,
-                "confidence_score": 0.0,
-                "recommended_stake_percentage": 0.0
-            },
-            "btts_value_bet": None,
-            "ou_value_bet": None,
-            "corners_value_bet": None,
-            "dc_value_bet": None,
-            "dnb_value_bet": None
-        }
-        
-    h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
-    a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
+        # Prawdziwy GIGA-Fallback (MOCK STATE - Średniak 1.5 gola) na rzecz Reprezentacji
+        h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = 1.5, 1.4, 1.4, 11.0, 11.0, 4.5, 4.5, 0.0, 5
+        a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = 1.5, 1.4, 1.4, 11.0, 11.0, 4.5, 4.5, 0.0, 5
+        h_elo = 1500.0
+        a_elo = 1500.0
+    else:
+        h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
+        a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
+        h_elo = team_states[home].elo
+        a_elo = team_states[away].elo
     
     if h_games < 1: h_games = 1
     if a_games < 1: a_games = 1

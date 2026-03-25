@@ -130,11 +130,22 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const formatEdge = (edge) => (!edge || edge <= 0) ? '0%' : `${edge}%`;
 
+             const makeDecision = (edge, odds) => {
+                 let e = parseFloat(edge);
+                 if (!e || e <= 0 || isNaN(e)) return "❌ Pomiń (brak value)";
+                 let o = parseFloat(odds);
+                 if (!o || o <= 1.0) return "❌ Pomiń (brak kursu)";
+                 let k = ((e / 100) / (o - 1)) * 100;
+                 return `✅ Gramy (Stawka: ${k.toFixed(1)}%)`;
+             };
+
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
              chunk += `> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n`;
              if (m.odds_spread_home) chunk += `> Spread Home: ${m.odds_spread_home}\n`;
              if (m.odds_totals_over) chunk += `> Totals Over: ${m.odds_totals_over}\n`;
-             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${formatEdge(m.ai_edge)})\n\n`;
+             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${formatEdge(m.ai_edge)})\n`;
+             let sel_odds = m.ai_forecast && m.ai_forecast.includes("Home") ? m.odds_home : m.odds_away;
+             chunk += `> *Zwycięzca Decyzja:* ${makeDecision(m.ai_edge, sel_odds)}\n\n`;
              
              if (currentReport.length + chunk.length > 1900) {
                  payloads.push(currentReport);
@@ -172,7 +183,17 @@ discordClient.on('messageCreate', async (message) => {
         const payloads = [];
         for (const m of res.rows) {
              const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
+             const makeDecision = (edge, odds) => {
+                 let e = parseFloat(edge);
+                 if (!e || e <= 0 || isNaN(e)) return "❌ Pomiń";
+                 let o = parseFloat(odds);
+                 if (!o || o <= 1.0) return "❌ Pomiń";
+                 let k = ((e / 100) / (o - 1)) * 100;
+                 return `✅ Gramy (Stawka: ${k.toFixed(1)}%)`;
+             };
+             let sel_odds = m.ai_forecast && m.ai_forecast.includes("Home") ? m.odds_home : m.odds_away;
+
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n> *Decyzja:* ${makeDecision(m.ai_edge, sel_odds)}\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
         if (cr.trim().length > 0) payloads.push(cr);
@@ -196,7 +217,17 @@ discordClient.on('messageCreate', async (message) => {
         const payloads = [];
         for (const m of res.rows) {
              const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
+             const makeDecision = (edge, odds) => {
+                 let e = parseFloat(edge);
+                 if (!e || e <= 0 || isNaN(e)) return "❌ Pomiń";
+                 let o = parseFloat(odds);
+                 if (!o || o <= 1.0) return "❌ Pomiń";
+                 let k = ((e / 100) / (o - 1)) * 100;
+                 return `✅ Gramy (Stawka: ${k.toFixed(1)}%)`;
+             };
+             let sel_odds = m.ai_forecast && m.ai_forecast.includes("Home") ? m.odds_home : m.odds_away;
+             
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n> *Decyzja:* ${makeDecision(m.ai_edge, sel_odds)}\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
         if (cr.trim().length > 0) payloads.push(cr);
