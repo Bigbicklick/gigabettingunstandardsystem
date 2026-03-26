@@ -237,7 +237,6 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     poisson_btts_yes = 0.0
     poisson_ou_over = 0.0
     
-    # Generowanie matematycznej siatki Poissona (max 7 goli)
     for h in range(7):
         for a in range(7):
             p = poisson(h_attack, h) * poisson(a_attack, a)
@@ -249,34 +248,47 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     poisson_btts_no = 1.0 - poisson_btts_yes
     poisson_ou_under = 1.0 - poisson_ou_over
     
-    # Model predictions
-    # 0 = Home, 1 = Draw, 2 = Away
-    X = np.array([feature_row])
-    probs = model.predict_proba(X)[0]
-    
-    p_home = float(probs[0])
-    p_draw = float(probs[1])
-    p_away = float(probs[2])
-    
-    # BTTS predictions
-    probs_btts = model_btts.predict_proba(X)[0]
-    p_btts_no = float(probs_btts[0])
-    p_btts_yes = float(probs_btts[1])
-    
-    # Over/Under predictions
-    probs_ou = model_ou.predict_proba(X)[0]
-    p_ou_under = float(probs_ou[0])
-    p_ou_over = float(probs_ou[1])
-    
-    # Corners predictions
-    probs_cor = model_corners.predict_proba(X)[0]
-    p_cor_under = float(probs_cor[0])
-    p_cor_over = float(probs_cor[1])
-    
-    # Prediction class
-    best_idx = np.argmax(probs)
-    class_map = {0: home, 1: "Draw", 2: away}
-    prediction_label = class_map[best_idx]
+    if model is None:
+        p_home = calculate_implied_prob(req.odds_home) or 0.33
+        p_draw = calculate_implied_prob(req.odds_draw) or 0.33
+        p_away = calculate_implied_prob(req.odds_away) or 0.33
+        
+        p_btts_yes = calculate_implied_prob(req.odds_btts_yes) or poisson_btts_yes
+        p_btts_no = 1.0 - p_btts_yes
+        
+        p_ou_over = calculate_implied_prob(req.odds_ou_over) or poisson_ou_over
+        p_ou_under = 1.0 - p_ou_over
+        
+        p_cor_over = calculate_implied_prob(req.odds_corners_over) or 0.5
+        p_cor_under = 1.0 - p_cor_over
+        
+        best_idx = np.argmax([p_home, p_draw, p_away])
+        class_map = {0: home, 1: "Draw", 2: away}
+        prediction_label = class_map[best_idx]
+    else:
+        # 0 = Home, 1 = Draw, 2 = Away
+        X = np.array([feature_row])
+        probs = model.predict_proba(X)[0]
+        
+        p_home = float(probs[0])
+        p_draw = float(probs[1])
+        p_away = float(probs[2])
+        
+        probs_btts = model_btts.predict_proba(X)[0]
+        p_btts_no = float(probs_btts[0])
+        p_btts_yes = float(probs_btts[1])
+        
+        probs_ou = model_ou.predict_proba(X)[0]
+        p_ou_under = float(probs_ou[0])
+        p_ou_over = float(probs_ou[1])
+        
+        probs_cor = model_corners.predict_proba(X)[0]
+        p_cor_under = float(probs_cor[0])
+        p_cor_over = float(probs_cor[1])
+        
+        best_idx = np.argmax(probs)
+        class_map = {0: home, 1: "Draw", 2: away}
+        prediction_label = class_map[best_idx]
     
     # Value bet logic
     value_bet = False
