@@ -443,8 +443,53 @@ async function fetchUpcomingTennisMatches() {
 }
 
 async function fetchUpcomingEsportsMatches() {
-  console.log('Esports data currently suspended due to TheSportsDB API removing free esports endpoints. Waiting for alternate premium Esports provider.');
-  return;
+  const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
+  if (!ODDS_API_KEY) return;
+  console.log('Discovering active Esport tournaments from The Odds API...');
+  try {
+    const esportsKeys = ['esports_csgo_match_winner', 'esports_league_of_legends', 'esports_dota_2_match_winner', 'esports_valorant', 'esports_overwatch'];
+    const client = await pool.connect();
+    let totalSaved = 0;
+
+    for (const sportKey of esportsKeys) {
+      try {
+        const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/`, {
+          params: { apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
+        });
+        
+        if (!res.data || !Array.isArray(res.data)) continue;
+        
+        for (const match of res.data) {
+          if (new Date(match.commence_time) < new Date()) continue;
+          let oH = null, oA = null;
+          if (match.bookmakers && match.bookmakers.length > 0) {
+            const h2h = match.bookmakers[0].markets.find(m => m.key === 'h2h');
+            if (h2h && h2h.outcomes) {
+              const hOut = h2h.outcomes.find(o => o.name === match.home_team);
+              const aOut = h2h.outcomes.find(o => o.name === match.away_team);
+              if (hOut) oH = hOut.price;
+              if (aOut) oA = aOut.price;
+            }
+          }
+          try {
+            await client.query(`
+              INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_away) 
+              VALUES ($1, $2, $3, $4, $5, 'NS', $6, $7) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
+            `, [`esp_${match.id}`, sportKey, match.home_team, match.away_team, match.commence_time, oH, oA]);
+            totalSaved++;
+          } catch (e) { console.error('DB write error Esport:', e.message); }
+        }
+      } catch (tournamentErr) {
+        if (tournamentErr.response && tournamentErr.response.status === 404) {
+            // Ignorujemy 404 bo dany e-sport może po prostu nie grać w tym momencie
+        } else {
+            console.error(`Error fetching odds for ${sportKey}:`, tournamentErr.message);
+        }
+      }
+    }
+    console.log(`Saved ${totalSaved} upcoming Esport matches.`);
+    client.release();
+  } catch (e) { console.error('Error in fetch Esport:', e.message); }
 }
 
 

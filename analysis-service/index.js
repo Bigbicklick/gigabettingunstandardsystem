@@ -147,13 +147,23 @@ discordClient.on('messageCreate', async (message) => {
         const payloads = [];
         
         for (const m of res.rows) {
-             const formatEdge = (edge) => (!edge || edge <= 0) ? '0%' : `${edge}%`;
+             const makeDecision = (edge, odds) => {
+                 let e = parseFloat(edge);
+                 if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
+                 if (e <= 0) return `❌ Pomiń (Ujemne Edge: ${e.toFixed(2)}%)`;
+                 let o = parseFloat(odds);
+                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: Oblicz na podstawie bukmachera)`;
+                 let k = ((e / 100) / (o - 1)) * 100;
+                 return `✅ GRAMY (Edge: ${e}%, Stawka: ${k.toFixed(1)}%)`;
+             };
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
              chunk += `> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n`;
              if (m.odds_spread_home) chunk += `> Spread Home: ${m.odds_spread_home}\n`;
              if (m.odds_totals_over) chunk += `> Totals Over: ${m.odds_totals_over}\n`;
-             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${formatEdge(m.ai_edge)})\n\n`;
+             
+             let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
+             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
              
              if (currentReport.length + chunk.length > 1900) {
                  payloads.push(currentReport);
@@ -190,8 +200,17 @@ discordClient.on('messageCreate', async (message) => {
         let cr = "🎾 **KURSOWY RAPORT TENIS [Multi-Regional ATP: Phase 10]** 🎾🔥\nTheSportsDB Live XGBoost Fetch\n\n";
         const payloads = [];
         for (const m of res.rows) {
-             const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
+             const makeDecision = (edge, odds) => {
+                 let e = parseFloat(edge);
+                 if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
+                 if (e <= 0) return `❌ Pomiń (Ujemne Edge: ${e.toFixed(2)}%)`;
+                 let o = parseFloat(odds);
+                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: ?)`;
+                 let k = ((e / 100) / (o - 1)) * 100;
+                 return `✅ GRAMY (Edge: ${e}%, Stawka: ${k.toFixed(1)}%)`;
+             };
+             let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
         if (cr.trim().length > 0) payloads.push(cr);
@@ -214,8 +233,17 @@ discordClient.on('messageCreate', async (message) => {
         let cr = "🎮 **KURSOWY RAPORT ESPORT [Multi-Regional: Phase 10]** 🎮🔥\nTheSportsDB Live AI Engine\n\n";
         const payloads = [];
         for (const m of res.rows) {
-             const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
+             const makeDecision = (edge, odds) => {
+                 let e = parseFloat(edge);
+                 if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
+                 if (e <= 0) return `❌ Pomiń (Ujemne Edge: ${e.toFixed(2)}%)`;
+                 let o = parseFloat(odds);
+                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: ?)`;
+                 let k = ((e / 100) / (o - 1)) * 100;
+                 return `✅ GRAMY (Edge: ${e}%, Stawka: ${k.toFixed(1)}%)`;
+             };
+             let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
         if (cr.trim().length > 0) payloads.push(cr);
