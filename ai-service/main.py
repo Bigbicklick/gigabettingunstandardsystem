@@ -73,45 +73,54 @@ scheduler = BackgroundScheduler()
 
 def load_ai():
     global model, model_btts, model_ou, model_corners, team_states, team_states_basket
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH):
-        logger.warning("Football Model not found. Executing ML Pipeline to fetch data and train model...")
-        ml_pipeline.train_model()
-        
-    if not os.path.exists(ml_pipeline_basket.BASKET_STATE_FILE):
-        logger.warning("Basket State not found. Training Basketball ML pipeline...")
-        ml_pipeline_basket.train_basket_model()
-        
-    if not os.path.exists(ml_pipeline_esport.ESPORT_MODEL_FILE):
-        logger.warning("Esport Model not found. Synthesizing Esport ML pipeline...")
-        ml_pipeline_esport.train_esport_model()
-        
-    if not os.path.exists(ml_pipeline_tennis.TENNIS_MODEL_FILE):
-        logger.warning("Tennis Model not found. Synthesizing Tennis ML pipeline...")
-        ml_pipeline_tennis.train_tennis_model()
-    
-    model = joblib.load(MODEL_PATH)
-    model_btts = joblib.load('model_btts.joblib')
-    model_ou = joblib.load('model_ou.joblib')
-    model_corners = joblib.load('model_corners.joblib')
-    team_states = joblib.load(STATE_PATH)
-    team_states_basket = joblib.load(ml_pipeline_basket.BASKET_STATE_FILE)
-    logger.info("Models and team states (Football & Basket) loaded successfully.")
+    # BEZPIECZNE ŁADOWANIE - nigdy nie trenujemy synchronicznie przy starcie!
+    try:
+        model = joblib.load(MODEL_PATH)
+        model_btts = joblib.load('model_btts.joblib')
+        model_ou = joblib.load('model_ou.joblib')
+        model_corners = joblib.load('model_corners.joblib')
+        team_states = joblib.load(STATE_PATH)
+        logger.info("Football models loaded successfully.")
+    except Exception as e:
+        logger.warning(f"Cannot load Football Model. Fallback active. Err: {e}")
+        model = None
+
+    try:
+        team_states_basket = joblib.load(ml_pipeline_basket.BASKET_STATE_FILE)
+        logger.info("Basket model loaded successfully.")
+    except Exception as e:
+        logger.warning(f"Cannot load Basket Model. Err: {e}")
+        team_states_basket = None
+
+    try:
+        import pickle
+        with open(ml_pipeline_tennis.TENNIS_MODEL_FILE, 'rb') as f:
+            ml_pipeline_tennis.tennis_model = pickle.load(f)
+        logger.info("Tennis model loaded successfully.")
+    except Exception as e:
+        logger.warning(f"Cannot load Tennis Model. Err: {e}")
+
+    try:
+        import pickle
+        with open(ml_pipeline_esport.ESPORT_MODEL_FILE, 'rb') as f:
+            ml_pipeline_esport.esport_model = pickle.load(f)
+        logger.info("Esport model loaded successfully.")
+    except Exception as e:
+        logger.warning(f"Cannot load Esport Model. Err: {e}")
 
 def scheduled_retrain():
-    logger.info("Starting Auto-Retraining Pipeline (APScheduler) - Fetching latest results...")
+    logger.info("Starting Auto-Retraining Pipeline (APScheduler)...")
     try:
-        # Retrain in background thread
         ml_pipeline.train_model()
-        # Atomic swap in memory happens during load_ai
         load_ai()
-        logger.info("Auto-Retraining Pipeline completed. RAM memory swapped without downtime.")
+        logger.info("Auto-Retraining Pipeline completed.")
     except Exception as e:
         logger.error(f"Failed to auto-train: {e}")
 
 @app.on_event("startup")
 async def startup_event():
     load_ai()
-    # Schedule autonomous learning every Monday at 04:00 AM Europe Time
+    # Schedule autonomous learning every Monday at 04:00 AM
     scheduler.add_job(scheduled_retrain, 'cron', day_of_week='mon', hour=4, minute=0)
     scheduler.start()
 
