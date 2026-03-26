@@ -114,175 +114,107 @@ async function initDB() {
 }
 
 async function fetchUpcomingMatches() {
-  const API_KEY = process.env.API_FOOTBALL_KEY || 'b7f45f642df6cfd1946785a08c153db2';
-  if (!API_KEY) {
-    console.log('No API_KEY provided, skipping fetch.');
-    return;
-  }
-  
-  console.log('Connecting to API-Football to grab today fixtures...');
-  
-  const todayStr = new Date().toISOString().split('T')[0];
-  
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
-  
-  const targetLeagues = [
-    39, 40, 41, 42, 179, // Anglia + Szkocja
-    78, 79,              // Niemcy
-    135, 136,            // Wlochy
-    140, 141,            // Hiszpania
-    61, 62,              // Francja
-    88, 144, 94, 203, 197, // Holandia, Belgia, Portugalia, Turcja, Grecja
-    2, 3, 4, 5, 10, 15, 34 // International & Cups: Champions/Europa League, Euro, Nations League, Friendlies, WC, WC Quali.
-  ];
+  const ODDS_API_KEY = getRandomOddsKey();
+  if (!ODDS_API_KEY) return;
+  console.log('Connecting to The Odds API to grab upcoming FOOTBALL fixtures & odds (Replacing API-Football)...');
   
   try {
-    const fixResponseToday = await axios.get('https://v3.football.api-sports.io/fixtures', {
-      params: { date: todayStr },
-      headers: { 'x-apisports-key': API_KEY }
-    });
-    
-    const fixResponseTomorrow = await axios.get('https://v3.football.api-sports.io/fixtures', {
-      params: { date: tomorrowStr },
-      headers: { 'x-apisports-key': API_KEY }
-    });
+    const soccerKeys = [
+        'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 
+        'soccer_germany_bundesliga', 'soccer_france_ligue_one', 
+        'soccer_uefa_champs_league', 'soccer_uefa_europa_league',
+        'soccer_netherlands_eredivisie', 'soccer_portugal_primeira_liga',
+        'soccer_fifa_world_cup_qualifiers', 'soccer_uefa_nations_league'
+    ];
     
     let allMatches = [];
-    if (fixResponseToday.data && fixResponseToday.data.response) {
-       allMatches = allMatches.concat(fixResponseToday.data.response);
-    }
-    if (fixResponseTomorrow.data && fixResponseTomorrow.data.response) {
-       allMatches = allMatches.concat(fixResponseTomorrow.data.response);
+    for (const sKey of soccerKeys) {
+        try {
+            const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${sKey}/odds/`, {
+                params: {
+                    apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h,spreads,totals', oddsFormat: 'decimal'
+                }
+            });
+            if (res.data && Array.isArray(res.data)) {
+                allMatches = allMatches.concat(res.data);
+            }
+        } catch(e) { } // ignoruj gdy liga nie gra
     }
     
     if (allMatches.length === 0) {
-      console.log('No fixtures found from API-Football today or tomorrow.');
+      console.log('No fixtures found from The Odds API today or tomorrow (football).');
       return;
     }
     
-    const premiumMatches = allMatches.filter(m => targetLeagues.includes(m.league.id) && m.fixture.status.short === 'NS');
-    
-    console.log(`Found ${premiumMatches.length} upcoming matches across the 18 expanded Giga Leagues.`);
-    
     const client = await pool.connect();
-    let requestsUsed = 1; // Used 1 for fixtures 
+    let addedCount = 0;
     
-    for (const match of premiumMatches) {
-        // Delay to respect API ratelimits of basic tier (10 limits per second typically, but 1 request per loop is safe)
-        await new Promise(r => setTimeout(r, 1000));
+    const maxDate = new Date();
+    maxDate.setHours(maxDate.getHours() + 48);
+
+    for (const match of allMatches) {
+        const matchDate = new Date(match.commence_time);
+        if (matchDate < new Date() || matchDate > maxDate) continue; 
+        
+        let oddsHome = null, oddsDraw = null, oddsAway = null;
+        let oddsOuOver = null, oddsOuUnder = null;
+        let oddsDc1X = null, oddsDcX2 = null, oddsDc12 = null;
+
+        if (match.bookmakers && match.bookmakers.length > 0) {
+            const bm = match.bookmakers[0];
+            
+            const h2h = bm.markets.find(m => m.key === 'h2h');
+            if (h2h && h2h.outcomes) {
+                oddsHome = h2h.outcomes.find(o => o.name === match.home_team)?.price || null;
+                oddsDraw = h2h.outcomes.find(o => o.name === 'Draw')?.price || null;
+                oddsAway = h2h.outcomes.find(o => o.name === match.away_team)?.price || null;
+                
+                if (oddsHome && oddsDraw && oddsAway) {
+                    const p1 = 1/oddsHome, pX = 1/oddsDraw, p2 = 1/oddsAway;
+                    const margin = (p1+pX+p2) - 1;
+                    const f1=p1-margin/3, fX=pX-margin/3, f2=p2-margin/3;
+                    if(f1+fX > 0) oddsDc1X = 1/(f1+fX);
+                    if(fX+f2 > 0) oddsDcX2 = 1/(fX+f2);
+                    if(f1+f2 > 0) oddsDc12 = 1/(f1+f2);
+                }
+            }
+            
+            const totals = bm.markets.find(m => m.key === 'totals');
+            if (totals && totals.outcomes) {
+                const overObj = totals.outcomes.find(o => o.name === 'Over');
+                const underObj = totals.outcomes.find(o => o.name === 'Under');
+                if (overObj && overObj.point === 2.5) oddsOuOver = overObj.price;
+                if (underObj && underObj.point === 2.5) oddsOuUnder = underObj.price;
+            }
+        }
         
         try {
-          requestsUsed++;
-          let oddsResponse = await axios.get('https://v3.football.api-sports.io/odds', {
-             params: { fixture: match.fixture.id, bookmaker: 1 },
-             headers: { 'x-apisports-key': API_KEY }
-          });
-          
-          if (!oddsResponse.data || !oddsResponse.data.response || oddsResponse.data.response.length === 0) {
-             // Fallback to Bet365 if 1xBet doesn't have odds for this yet
-             requestsUsed++;
-             oddsResponse = await axios.get('https://v3.football.api-sports.io/odds', {
-                 params: { fixture: match.fixture.id, bookmaker: 8 },
-                 headers: { 'x-apisports-key': API_KEY }
-             });
-             
-             if (!oddsResponse.data || !oddsResponse.data.response || oddsResponse.data.response.length === 0) {
-                 continue; // Still no odds
-             }
-          }
-          
-          const bookmakers = oddsResponse.data.response[0].bookmakers;
-          
-          let oddsHome = null, oddsDraw = null, oddsAway = null;
-          let oddsBttsYes = null, oddsBttsNo = null;
-          let oddsOuOver = null, oddsOuUnder = null;
-          let oddsCornersOver = null, oddsCornersUnder = null;
-          let oddsDc1X = null, oddsDcX2 = null, oddsDc12 = null;
-          let oddsDnbHome = null, oddsDnbAway = null;
-          
-          for (const bookmaker of bookmakers) {
-            if (bookmaker && bookmaker.bets) {
-              const h2h = bookmaker.bets.find(b => b.id === 1);
-              if (h2h && !oddsHome) {
-                oddsHome = h2h.values.find(v => v.value === 'Home')?.odd || null;
-                oddsDraw = h2h.values.find(v => v.value === 'Draw')?.odd || null;
-                oddsAway = h2h.values.find(v => v.value === 'Away')?.odd || null;
-              }
-              
-              const totals = bookmaker.bets.find(b => b.id === 5);
-              if (totals && !oddsOuOver) {
-                oddsOuOver = totals.values.find(v => v.value === 'Over 2.5')?.odd || null;
-                oddsOuUnder = totals.values.find(v => v.value === 'Under 2.5')?.odd || null;
-              }
-
-              const btts = bookmaker.bets.find(b => b.id === 8);
-              if (btts && !oddsBttsYes) {
-                oddsBttsYes = btts.values.find(v => v.value === 'Yes')?.odd || null;
-                oddsBttsNo = btts.values.find(v => v.value === 'No')?.odd || null;
-              }
-              
-              const corners = bookmaker.bets.find(b => b.id === 45 || b.name === 'Corners Over/Under');
-              if (corners && !oddsCornersOver) {
-                oddsCornersOver = corners.values.find(v => v.value === 'Over 9.5' || v.value === 'Over 9.50' || v.value === 'Over 9')?.odd || null;
-                oddsCornersUnder = corners.values.find(v => v.value === 'Under 9.5' || v.value === 'Under 9.50' || v.value === 'Under 9')?.odd || null;
-              }
-              
-              const dc = bookmaker.bets.find(b => b.id === 12 || b.name === 'Double Chance');
-              if (dc && !oddsDc1X) {
-                oddsDc1X = dc.values.find(v => v.value === 'Home/Draw' || v.value === '1X')?.odd || null;
-                oddsDcX2 = dc.values.find(v => v.value === 'Draw/Away' || v.value === 'X2')?.odd || null;
-                oddsDc12 = dc.values.find(v => v.value === 'Home/Away' || v.value === '12')?.odd || null;
-              }
-
-              const dnb = bookmaker.bets.find(b => b.id === 53 || b.name === 'Draw No Bet' || b.name === 'Draw no bet');
-              if (dnb && !oddsDnbHome) {
-                oddsDnbHome = dnb.values.find(v => v.value === 'Home')?.odd || null;
-                oddsDnbAway = dnb.values.find(v => v.value === 'Away')?.odd || null;
-              }
-            }
-          }
-          
-          // Save or Update
-          await client.query(`
-            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under, odds_dc_1x, odds_dc_x2, odds_dc_12, odds_dnb_home, odds_dnb_away)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-            ON CONFLICT (fixture_id) DO UPDATE 
-            SET odds_home = EXCLUDED.odds_home, 
-                odds_draw = EXCLUDED.odds_draw, 
-                odds_away = EXCLUDED.odds_away,
-                odds_btts_yes = EXCLUDED.odds_btts_yes,
-                odds_btts_no = EXCLUDED.odds_btts_no,
-                odds_ou_over = EXCLUDED.odds_ou_over,
-                odds_ou_under = EXCLUDED.odds_ou_under,
-                odds_corners_over = EXCLUDED.odds_corners_over,
-                odds_corners_under = EXCLUDED.odds_corners_under,
-                odds_dc_1x = EXCLUDED.odds_dc_1x,
-                odds_dc_x2 = EXCLUDED.odds_dc_x2,
-                odds_dc_12 = EXCLUDED.odds_dc_12,
-                odds_dnb_home = EXCLUDED.odds_dnb_home,
-                odds_dnb_away = EXCLUDED.odds_dnb_away,
-                date = EXCLUDED.date;
-          `, [
-            `fb_${match.fixture.id}`, 
-            match.league.name, 
-            match.teams.home.name, 
-            match.teams.away.name, 
-            match.fixture.date, 
-            match.fixture.status.short, 
-            oddsHome, oddsDraw, oddsAway, oddsBttsYes, oddsBttsNo, oddsOuOver, oddsOuUnder, oddsCornersOver, oddsCornersUnder, oddsDc1X, oddsDcX2, oddsDc12, oddsDnbHome, oddsDnbAway
-          ]);
-        } catch (oddsErr) {
-           console.error('Failed fetching odds for fixture:', match.fixture.id);
+            await client.query(`
+              INSERT INTO matches (
+                fixture_id, league_name, home_team, away_team, date, 
+                status, odds_home, odds_draw, odds_away, 
+                odds_ou_over, odds_ou_under, odds_dc_1x, odds_dc_x2, odds_dc_12
+              ) VALUES ($1, $2, $3, $4, $5, 'NS', $6, $7, $8, $9, $10, $11, $12, $13)
+              ON CONFLICT (fixture_id) DO UPDATE SET
+                odds_home = EXCLUDED.odds_home, odds_draw = EXCLUDED.odds_draw, odds_away = EXCLUDED.odds_away,
+                odds_ou_over = EXCLUDED.odds_ou_over, odds_ou_under = EXCLUDED.odds_ou_under,
+                odds_dc_1x = EXCLUDED.odds_dc_1x, odds_dc_x2 = EXCLUDED.odds_dc_x2, odds_dc_12 = EXCLUDED.odds_dc_12,
+                date = EXCLUDED.date
+            `, [
+              `theodds_${match.id}`, match.sport_title, match.home_team, match.away_team, match.commence_time,
+              oddsHome, oddsDraw, oddsAway, oddsOuOver, oddsOuUnder, oddsDc1X, oddsDcX2, oddsDc12
+            ]);
+            addedCount++;
+        } catch (e) {
+            console.error('DB Insert error:', e.message);
         }
     }
     
-    console.log(`Saved matched odds to Postgres. Free API-Football requests consumed this cycle: ${requestsUsed}`);
+    console.log(`Saved matched odds to Postgres (The Odds API Soccer). Matches added: ${addedCount}`);
     client.release();
     
   } catch (error) {
-    console.error('Error fetching API-Football data:', error.message);
+    console.error('Error fetching Football TheOdds API data:', error.message);
   }
 }
 
