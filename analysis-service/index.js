@@ -130,22 +130,11 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const formatEdge = (edge) => (!edge || edge <= 0) ? '0%' : `${edge}%`;
 
-             const makeDecision = (edge, odds) => {
-                 let e = parseFloat(edge);
-                 if (!e || e <= 0 || isNaN(e)) return "❌ Pomiń (brak value)";
-                 let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return "❌ Pomiń (brak kursu)";
-                 let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ Gramy (Stawka: ${k.toFixed(1)}%)`;
-             };
-
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
              chunk += `> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n`;
              if (m.odds_spread_home) chunk += `> Spread Home: ${m.odds_spread_home}\n`;
              if (m.odds_totals_over) chunk += `> Totals Over: ${m.odds_totals_over}\n`;
-             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${formatEdge(m.ai_edge)})\n`;
-             let sel_odds = m.ai_forecast && m.ai_forecast.includes("Home") ? m.odds_home : m.odds_away;
-             chunk += `> *Zwycięzca Decyzja:* ${makeDecision(m.ai_edge, sel_odds)}\n\n`;
+             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${formatEdge(m.ai_edge)})\n\n`;
              
              if (currentReport.length + chunk.length > 1900) {
                  payloads.push(currentReport);
@@ -183,17 +172,7 @@ discordClient.on('messageCreate', async (message) => {
         const payloads = [];
         for (const m of res.rows) {
              const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
-             const makeDecision = (edge, odds) => {
-                 let e = parseFloat(edge);
-                 if (!e || e <= 0 || isNaN(e)) return "❌ Pomiń";
-                 let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return "❌ Pomiń";
-                 let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ Gramy (Stawka: ${k.toFixed(1)}%)`;
-             };
-             let sel_odds = m.ai_forecast && m.ai_forecast.includes("Home") ? m.odds_home : m.odds_away;
-
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n> *Decyzja:* ${makeDecision(m.ai_edge, sel_odds)}\n\n`;
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
         if (cr.trim().length > 0) payloads.push(cr);
@@ -217,17 +196,7 @@ discordClient.on('messageCreate', async (message) => {
         const payloads = [];
         for (const m of res.rows) {
              const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
-             const makeDecision = (edge, odds) => {
-                 let e = parseFloat(edge);
-                 if (!e || e <= 0 || isNaN(e)) return "❌ Pomiń";
-                 let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return "❌ Pomiń";
-                 let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ Gramy (Stawka: ${k.toFixed(1)}%)`;
-             };
-             let sel_odds = m.ai_forecast && m.ai_forecast.includes("Home") ? m.odds_home : m.odds_away;
-             
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n> *Decyzja:* ${makeDecision(m.ai_edge, sel_odds)}\n\n`;
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
         if (cr.trim().length > 0) payloads.push(cr);
@@ -301,7 +270,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${h2h.model_probability}%
 ✅ **VALUE BET EDGE**: ${h2h.edge_percent}%
 🧠 **CONFIDENCE**: ${h2h.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${h2h.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
+💸 **SUGGESTED STAKE**: ${h2h.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msg.trim() });
         }
         
@@ -316,7 +285,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${btts.model_probability}%
 ✅ **VALUE BET EDGE**: ${btts.edge_percent}%
 🧠 **CONFIDENCE**: ${btts.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${btts.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
+💸 **SUGGESTED STAKE**: ${btts.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgBtts.trim() });
         }
         
@@ -331,7 +300,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${ou.model_probability}%
 ✅ **VALUE BET EDGE**: ${ou.edge_percent}%
 🧠 **CONFIDENCE**: ${ou.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${ou.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
+💸 **SUGGESTED STAKE**: ${ou.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgOu.trim() });
         }
         
@@ -346,7 +315,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${cor.model_probability}%
 ✅ **VALUE BET EDGE**: ${cor.edge_percent}%
 🧠 **CONFIDENCE**: ${cor.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${cor.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
+💸 **SUGGESTED STAKE**: ${cor.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgCor.trim() });
         }
         
@@ -361,7 +330,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${dc.model_probability}%
 ✅ **VALUE BET EDGE**: ${dc.edge_percent}%
 🧠 **CONFIDENCE**: ${dc.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${dc.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
+💸 **SUGGESTED STAKE**: ${dc.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgDc.trim() });
         }
         
@@ -376,7 +345,7 @@ async function analyzeUpcomingMatches() {
 📈 **MODEL PROBABILITY**: ${dnb.model_probability}%
 ✅ **VALUE BET EDGE**: ${dnb.edge_percent}%
 🧠 **CONFIDENCE**: ${dnb.confidence_score}/10
-💸 **SUGGESTED STAKE**: ${dnb.recommended_stake_percentage}% of bankroll (Dynamic Kelly)`;
+💸 **SUGGESTED STAKE**: ${dnb.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgDnb.trim() });
         }
         
@@ -609,7 +578,7 @@ function start() {
 
   // Run every hour at minute 0 for the summary report
   cron.schedule('0 * * * *', () => {
-    sendHourlyReport();
+    sendHourly report();
   });
   
   console.log('Analysis service scheduled to run every 10 minutes (Signals) and every 1 hour (Reports).');

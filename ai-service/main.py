@@ -73,46 +73,29 @@ scheduler = BackgroundScheduler()
 
 def load_ai():
     global model, model_btts, model_ou, model_corners, team_states, team_states_basket
-    global basket_model, tennis_model, tennis_states, esport_model, esport_states
+    if not os.path.exists(MODEL_PATH) or not os.path.exists(STATE_PATH):
+        logger.warning("Football Model not found. Executing ML Pipeline to fetch data and train model...")
+        ml_pipeline.train_model()
+        
+    if not os.path.exists(ml_pipeline_basket.BASKET_STATE_FILE):
+        logger.warning("Basket State not found. Training Basketball ML pipeline...")
+        ml_pipeline_basket.train_basket_model()
+        
+    if not os.path.exists(ml_pipeline_esport.ESPORT_MODEL_FILE):
+        logger.warning("Esport Model not found. Synthesizing Esport ML pipeline...")
+        ml_pipeline_esport.train_esport_model()
+        
+    if not os.path.exists(ml_pipeline_tennis.TENNIS_MODEL_FILE):
+        logger.warning("Tennis Model not found. Synthesizing Tennis ML pipeline...")
+        ml_pipeline_tennis.train_tennis_model()
     
-    # Try Football
-    try:
-        model = joblib.load(MODEL_PATH)
-        model_btts = joblib.load('model_btts.joblib')
-        model_ou = joblib.load('model_ou.joblib')
-        model_corners = joblib.load('model_corners.joblib')
-        team_states = joblib.load(STATE_PATH)
-        logger.info("Football main model loaded OK")
-    except Exception as e:
-        logger.error(f"Cannot load Football Model. Fallback active. Err: {e}")
-        
-    # Try Basket
-    try:
-        basket_model = joblib.load(ml_pipeline_basket.BASKET_MODEL_FILE)
-        team_states_basket = joblib.load(ml_pipeline_basket.BASKET_STATE_FILE)
-        logger.info("Basket model loaded OK")
-    except Exception as e:
-        logger.error(f"Cannot load Basket Model. Err: {e}")
-
-    # Try Tennis
-    try:
-        tennis_model = joblib.load(ml_pipeline_tennis.TENNIS_MODEL_FILE)
-        with open(ml_pipeline_tennis.TENNIS_STATE_FILE, 'rb') as f:
-            tennis_states = pickle.load(f)
-        logger.info("Tennis model loaded OK")
-    except Exception as e:
-        logger.error(f"Cannot load Tennis Model. Err: {e}")
-        
-    # Try Esport
-    try:
-        esport_model = joblib.load(ml_pipeline_esport.ESPORT_MODEL_FILE)
-        with open(ml_pipeline_esport.ESPORT_STATE_FILE, 'rb') as f:
-            esport_states = pickle.load(f)
-        logger.info("Esport model loaded OK")
-    except Exception as e:
-        logger.error(f"Cannot load Esport Model. Err: {e}")
-
-    logger.info("Menders Giga Fast Startup Routine Completed.")
+    model = joblib.load(MODEL_PATH)
+    model_btts = joblib.load('model_btts.joblib')
+    model_ou = joblib.load('model_ou.joblib')
+    model_corners = joblib.load('model_corners.joblib')
+    team_states = joblib.load(STATE_PATH)
+    team_states_basket = joblib.load(ml_pipeline_basket.BASKET_STATE_FILE)
+    logger.info("Models and team states (Football & Basket) loaded successfully.")
 
 def scheduled_retrain():
     logger.info("Starting Auto-Retraining Pipeline (APScheduler) - Fetching latest results...")
@@ -187,17 +170,11 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     home = req.home_team
     away = req.away_team
     
-    if team_states is None or home not in team_states or away not in team_states:
-        # Prawdziwy GIGA-Fallback (MOCK STATE - Średniak 1.5 gola) na rzecz Reprezentacji
-        h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = 1.5, 1.4, 1.4, 11.0, 11.0, 4.5, 4.5, 0.0, 5
-        a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = 1.5, 1.4, 1.4, 11.0, 11.0, 4.5, 4.5, 0.0, 5
-        h_elo = 1500.0
-        a_elo = 1500.0
-    else:
-        h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
-        a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
-        h_elo = team_states[home].elo
-        a_elo = team_states[away].elo
+    if home not in team_states or away not in team_states:
+        raise HTTPException(status_code=404, detail="Team history not found in database. Cannot predict.")
+        
+    h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
+    a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
     
     if h_games < 1: h_games = 1
     if a_games < 1: a_games = 1
@@ -268,16 +245,6 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     p_draw = float(probs[1])
     p_away = float(probs[2])
     
-    # Calculate global confidence score (Scale 0-10) based on strongest prediction
-    confidence_score = float(max(p_home, p_draw, p_away) * 10)
-    
-    if confidence_score >= 7.5:
-        kelly_multiplier = 0.35 # Aggressive
-    elif confidence_score >= 6.0:
-        kelly_multiplier = 0.25 # Standard 1/4 Kelly
-    else:
-        kelly_multiplier = 0.15 # Conservative
-        
     # BTTS predictions
     probs_btts = model_btts.predict_proba(X)[0]
     p_btts_no = float(probs_btts[0])
@@ -338,7 +305,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kelly_fraction = (p * b - q) / b
             if kelly_fraction > 0:
-                recommended_stake = round((kelly_fraction * kelly_multiplier) * 100, 2)
+                recommended_stake = round((kelly_fraction * 0.25) * 100, 2)
 
     btts_value_bet = False
     btts_best_bet = None
@@ -376,7 +343,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kelly_fraction = (p * b - q) / b
             if kelly_fraction > 0:
-                btts_recommended_stake = round((kelly_fraction * kelly_multiplier) * 100, 2)
+                btts_recommended_stake = round((kelly_fraction * 0.25) * 100, 2)
                 
     # Over/Under value bet logic
     ou_value_bet = False
@@ -414,7 +381,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kf = (p * b - (1.0 - p)) / b
             if kf > 0:
-                ou_recommended_stake = round((kf * kelly_multiplier) * 100, 2)
+                ou_recommended_stake = round((kf * 0.25) * 100, 2)
 
     # Corners value bet logic
     cor_value_bet = False
@@ -449,7 +416,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kf = (p * b - (1.0 - p)) / b
             if kf > 0:
-                cor_recommended_stake = round((kf * kelly_multiplier) * 100, 2)
+                cor_recommended_stake = round((kf * 0.25) * 100, 2)
 
     dc_value_bet = False
     dc_best_bet = None
@@ -488,7 +455,7 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kf = (p * b - (1.0 - p)) / b
             if kf > 0:
-                dc_recommended_stake = round((kf * kelly_multiplier) * 100, 2)
+                dc_recommended_stake = round((kf * 0.25) * 100, 2)
 
     dnb_value_bet = False
     dnb_best_bet = None
@@ -527,7 +494,9 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         if b > 0:
             kf = (p * b - (1.0 - p)) / b
             if kf > 0:
-                dnb_recommended_stake = round((kf * kelly_multiplier) * 100, 2)
+                dnb_recommended_stake = round((kf * 0.25) * 100, 2)
+
+    confidence_score = float(max(p_home, p_draw, p_away) * 10) # 0 to 10
     
     return {
         "match": f"{home} vs {away}",
