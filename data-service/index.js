@@ -4,8 +4,6 @@ const axios = require('axios');
 const cron = require('node-cron');
 
 const ODDS_API_KEYS = [
-  'e437116ef27159e682a544d52a8add2a', 
-  'e4998782ca808b29dbf7c4613ba339d2',
   'ea6f44c6de118cc4d2974bbe493d3d3e'
 ];
 const getRandomOddsKey = () => ODDS_API_KEYS[Math.floor(Math.random() * ODDS_API_KEYS.length)];
