@@ -180,10 +180,11 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     away = req.away_team
     
     if home not in team_states or away not in team_states:
-        raise HTTPException(status_code=404, detail="Team history not found in database. Cannot predict.")
-        
-    h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
-    a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
+        h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = 1.5, 1.5, 1.5, 10.0, 10.0, 4.0, 4.0, 5, 10
+        a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = 1.5, 1.5, 1.5, 10.0, 10.0, 4.0, 4.0, 5, 10
+    else:
+        h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
+        a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
     
     if h_games < 1: h_games = 1
     if a_games < 1: a_games = 1

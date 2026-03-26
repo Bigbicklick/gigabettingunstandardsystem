@@ -160,18 +160,18 @@ def predict_tennis_match(home_team, away_team, odds_home=None, odds_away=None):
                     "is_value": False
                 }
     else:
-        # No odds available - use form only
+        # No odds available - fallback to form
         if h_form > a_form:
             return {
                 "recommended_bet": "Home Win",
                 "model_probability": round(h_form, 2),
-                "edge_percent": 0.0,
+                "edge_percent": -5000,
                 "is_value": False
             }
         else:
             return {
                 "recommended_bet": "Away Win",
                 "model_probability": round(a_form, 2),
-                "edge_percent": 0.0,
+                "edge_percent": -5000,
                 "is_value": False
             }

@@ -37,7 +37,8 @@ discordClient.on('messageCreate', async (message) => {
      const pgClient = await pool.connect();
      try {
         const res = await pgClient.query(`
-          SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
+          SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge,
+                 odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under, odds_dc_1x, odds_dc_x2, odds_dc_12, odds_dnb_home, odds_dnb_away
           FROM matches 
           WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
           AND ai_forecast IS NOT NULL
@@ -51,15 +52,33 @@ discordClient.on('messageCreate', async (message) => {
         const payloads = [];
         
         for (const m of res.rows) {
-             const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}% - ${getEdgeAdvice(edge)}`;
+             const makeDecision = (edge, odds) => {
+                 let e = parseFloat(edge);
+                 if (!e || e <= 0 || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge)";
+                 let o = parseFloat(odds);
+                 if (!o || o <= 1.0) return "❌ Pomiń (Brak kursu)";
+                 let k = ((e / 100) / (o - 1)) * 100;
+                 return `✅ GRAMY (Edge: ${e}%, Stawka: ${k.toFixed(1)}%)`;
+             };
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
-             chunk += `> Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
-             chunk += `> Podwójna Szansa (DC): ${m.ai_dc_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_dc_edge)})\n`;
-             chunk += `> Remis Nie Ma Zakładu (DNB): ${m.ai_dnb_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_dnb_edge)})\n`;
-             chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_ou_edge)})\n`;
-             chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_btts_edge)})\n`;
-             chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_corners_edge)})\n\n`;
+             let sel_odds_h2h = m.ai_forecast === m.home_team ? m.odds_home : (m.ai_forecast === 'Draw' ? m.odds_draw : m.odds_away);
+             chunk += `> Zwycięzca: ${m.ai_forecast || 'Brak'} -> ${makeDecision(m.ai_edge, sel_odds_h2h)}\n`;
+             
+             let sel_odds_dc = m.ai_dc_forecast === '1X' ? m.odds_dc_1x : (m.ai_dc_forecast === 'X2' ? m.odds_dc_x2 : m.odds_dc_12);
+             chunk += `> Podwójna Szansa (DC): ${m.ai_dc_forecast || 'Brak'} -> ${makeDecision(m.ai_dc_edge, sel_odds_dc)}\n`;
+             
+             let sel_odds_dnb = m.ai_dnb_forecast === m.home_team ? m.odds_dnb_home : m.odds_dnb_away;
+             chunk += `> Remis Nie Ma Zakładu (DNB): ${m.ai_dnb_forecast || 'Brak'} -> ${makeDecision(m.ai_dnb_edge, sel_odds_dnb)}\n`;
+             
+             let sel_odds_ou = m.ai_ou_forecast === 'Over 2.5' ? m.odds_ou_over : m.odds_ou_under;
+             chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} -> ${makeDecision(m.ai_ou_edge, sel_odds_ou)}\n`;
+             
+             let sel_odds_btts = m.ai_btts_forecast === 'Yes' ? m.odds_btts_yes : m.odds_btts_no;
+             chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} -> ${makeDecision(m.ai_btts_edge, sel_odds_btts)}\n`;
+             
+             let sel_odds_cor = m.ai_corners_forecast && m.ai_corners_forecast.includes('Over') ? m.odds_corners_over : m.odds_corners_under;
+             chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} -> ${makeDecision(m.ai_corners_edge, sel_odds_cor)}\n\n`;
              
              if (currentReport.length + chunk.length > 1900) {
                  payloads.push(currentReport);
