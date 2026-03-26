@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 const axios = require('axios');
 const cron = require('node-cron');
 
-const API_KEY = process.env.THE_ODDS_API_KEY || 'demo_key';
+const API_KEY = process.env.THE_ODDS_API_KEY || 'e437116ef27159e682a544d52a8add2a';
 const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
 
 const pool = new Pool({
