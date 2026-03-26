@@ -284,7 +284,7 @@ async function fetchUpcomingMatches() {
 }
 
 async function fetchUpcomingBasketballMatches() {
-  const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
+  const ODDS_API_KEY = 'e437116ef27159e682a544d52a8add2a';
   if (!ODDS_API_KEY) {
     console.log('No THE_ODDS_API_KEY provided for Basketball. Skipping.');
     return;
@@ -384,7 +384,7 @@ async function fetchUpcomingBasketballMatches() {
 }
 
 async function fetchUpcomingTennisMatches() {
-  const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
+  const ODDS_API_KEY = 'e437116ef27159e682a544d52a8add2a';
   if (!ODDS_API_KEY) return;
   console.log('Discovering active Tennis tournaments from The Odds API...');
   try {
