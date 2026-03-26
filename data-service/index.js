@@ -4,7 +4,7 @@ const axios = require('axios');
 const cron = require('node-cron');
 
 const ODDS_API_KEYS = [
-  'ea6f44c6de118cc4d2974bbe493d3d3e'
+  'e437116ef27159e682a544d52a8add2a'
 ];
 const getRandomOddsKey = () => ODDS_API_KEYS[Math.floor(Math.random() * ODDS_API_KEYS.length)];
 const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
