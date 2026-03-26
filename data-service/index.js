@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 const axios = require('axios');
 const cron = require('node-cron');
 
-const API_KEY = process.env.THE_ODDS_API_KEY || 'e437116ef27159e682a544d52a8add2a';
+const API_KEY = 'e437116ef27159e682a544d52a8add2a';
 const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
 
 const pool = new Pool({
@@ -111,7 +111,7 @@ async function initDB() {
 }
 
 async function fetchUpcomingMatches() {
-  const API_KEY = process.env.API_FOOTBALL_KEY || process.env.THE_ODDS_API_KEY || '';
+  const API_KEY = process.env.API_FOOTBALL_KEY || 'e437116ef27159e682a544d52a8add2a';
   if (!API_KEY) {
     console.log('No API_KEY provided, skipping fetch.');
     return;
@@ -443,7 +443,7 @@ async function fetchUpcomingTennisMatches() {
 }
 
 async function fetchUpcomingEsportsMatches() {
-  const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || '';
+  const ODDS_API_KEY = 'e437116ef27159e682a544d52a8add2a';
   if (!ODDS_API_KEY) return;
   console.log('Discovering active Esport tournaments from The Odds API...');
   try {
