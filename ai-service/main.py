@@ -179,6 +179,9 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     home = req.home_team
     away = req.away_team
     
+    if team_states is None:
+        team_states = {}
+        
     if home not in team_states or away not in team_states:
         h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = 1.5, 1.5, 1.5, 10.0, 10.0, 4.0, 4.0, 5, 10
         a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = 1.5, 1.5, 1.5, 10.0, 10.0, 4.0, 4.0, 5, 10
