@@ -578,7 +578,7 @@ function start() {
 
   // Run every hour at minute 0 for the summary report
   cron.schedule('0 * * * *', () => {
-    sendHourly report();
+    sendHourlyReport();
   });
   
   console.log('Analysis service scheduled to run every 10 minutes (Signals) and every 1 hour (Reports).');
