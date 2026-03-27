@@ -383,38 +383,38 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         "most_likely_outcome": str(prediction_label),
         "value_bet": {
             "is_value": bool(value_bet), "recommended_bet": str(best_bet) if best_bet else None,
-            "edge_percent": round(highest_edge * 100, 2), "model_probability": round(model_prob_for_bet * 100, 2),
-            "bookmaker_odds": float(bookie_odds), "confidence_score": confidence_score,
+            "edge_percent": round(highest_edge * 100, 2) if highest_edge > -90.0 else 0.0, "model_probability": round(model_prob_for_bet * 100, 2),
+            "bookmaker_odds": float(bookie_odds or 0.0), "confidence_score": confidence_score,
             "recommended_stake_percentage": safe_kelly(model_prob_for_bet, bookie_odds)
         },
         "btts_value_bet": {
             "is_value": bool(btts_value_bet), "recommended_bet": str(btts_best_bet) if btts_best_bet else None,
-            "edge_percent": round(btts_highest_edge * 100, 2), "model_probability": round(btts_model_prob * 100, 2),
-            "bookmaker_odds": float(btts_bookie_odds), "confidence_score": confidence_score,
+            "edge_percent": round(btts_highest_edge * 100, 2) if btts_highest_edge > -90.0 else 0.0, "model_probability": round(btts_model_prob * 100, 2),
+            "bookmaker_odds": float(btts_bookie_odds or 0.0), "confidence_score": confidence_score,
             "recommended_stake_percentage": safe_kelly(btts_model_prob, btts_bookie_odds)
         },
         "ou_value_bet": {
             "is_value": bool(ou_value_bet), "recommended_bet": str(ou_best_bet) if ou_best_bet else None,
-            "edge_percent": round(ou_highest_edge * 100, 2), "model_probability": round(ou_model_prob * 100, 2),
-            "bookmaker_odds": float(ou_bookie_odds), "confidence_score": confidence_score,
+            "edge_percent": round(ou_highest_edge * 100, 2) if ou_highest_edge > -90.0 else 0.0, "model_probability": round(ou_model_prob * 100, 2),
+            "bookmaker_odds": float(ou_bookie_odds or 0.0), "confidence_score": confidence_score,
             "recommended_stake_percentage": safe_kelly(ou_model_prob, ou_bookie_odds)
         },
         "corners_value_bet": {
             "is_value": bool(cor_value_bet), "recommended_bet": str(cor_best_bet) if cor_best_bet else None,
-            "edge_percent": round(cor_highest_edge * 100, 2), "model_probability": round(cor_model_prob * 100, 2),
-            "bookmaker_odds": float(cor_bookie_odds), "confidence_score": confidence_score,
+            "edge_percent": round(cor_highest_edge * 100, 2) if cor_highest_edge > -90.0 else 0.0, "model_probability": round(cor_model_prob * 100, 2),
+            "bookmaker_odds": float(cor_bookie_odds or 0.0), "confidence_score": confidence_score,
             "recommended_stake_percentage": safe_kelly(cor_model_prob, cor_bookie_odds)
         },
         "dc_value_bet": {
             "is_value": bool(dc_value_bet), "recommended_bet": str(dc_best_bet) if dc_best_bet else None,
-            "edge_percent": round(dc_highest_edge * 100, 2), "model_probability": round(dc_model_prob * 100, 2),
-            "bookmaker_odds": float(dc_bookie_odds), "confidence_score": confidence_score,
+            "edge_percent": round(dc_highest_edge * 100, 2) if dc_highest_edge > -90.0 else 0.0, "model_probability": round(dc_model_prob * 100, 2),
+            "bookmaker_odds": float(dc_bookie_odds or 0.0), "confidence_score": confidence_score,
             "recommended_stake_percentage": safe_kelly(dc_model_prob, dc_bookie_odds)
         },
         "dnb_value_bet": {
             "is_value": bool(dnb_value_bet), "recommended_bet": str(dnb_best_bet) if dnb_best_bet else None,
-            "edge_percent": round(dnb_highest_edge * 100, 2), "model_probability": round(dnb_model_prob * 100, 2),
-            "bookmaker_odds": float(dnb_bookie_odds), "confidence_score": confidence_score,
+            "edge_percent": round(dnb_highest_edge * 100, 2) if dnb_highest_edge > -90.0 else 0.0, "model_probability": round(dnb_model_prob * 100, 2),
+            "bookmaker_odds": float(dnb_bookie_odds or 0.0), "confidence_score": confidence_score,
             "recommended_stake_percentage": safe_kelly(dnb_model_prob, dnb_bookie_odds)
         }
     }
