@@ -201,6 +201,176 @@ def resolve_team_name(name: str, known_teams: list) -> Optional[str]:
     return None
 
 
+def _remove_vig(probs: list) -> list:
+    """Normalise raw implied probabilities to sum to 1.0 (remove bookmaker overround)."""
+    total = sum(probs)
+    if total <= 0:
+        return probs
+    return [p / total for p in probs]
+
+
+def _kelly_stake(fair_p: float, odds: float) -> float:
+    b = odds - 1.0
+    if b <= 0:
+        return 0.0
+    kf = (fair_p * b - (1.0 - fair_p)) / b
+    return round(max(kf * 0.25, 0.0) * 100, 2)
+
+
+def predict_from_odds_only(req: PredictionRequest) -> Dict[str, Any]:
+    """Fallback: pure bookmaker-odds-based prediction when no ML training data exists for these teams.
+    Removes vig, computes fair probabilities, picks best outcome per market."""
+
+    label_h = req.home_team
+    label_a = req.away_team
+
+    # ── H2H ──────────────────────────────────────────────────────────────────
+    h2h_bet, h2h_prob, h2h_odds, h2h_edge = None, 0.0, None, 0.0
+    fp_home = fp_draw = fp_away = 0.0
+    if req.odds_home and req.odds_away:
+        raw = [1/req.odds_home, 1/req.odds_draw if req.odds_draw else 0.0, 1/req.odds_away]
+        fp_home, fp_draw, fp_away = _remove_vig(raw)
+        candidates = [
+            (label_h,  fp_home, req.odds_home),
+            ("Draw",   fp_draw, req.odds_draw) if req.odds_draw else ("Draw", 0, None),
+            (label_a,  fp_away, req.odds_away),
+        ]
+        h2h_bet, h2h_prob, h2h_odds = max(candidates, key=lambda x: x[1])
+        if h2h_odds:
+            h2h_edge = round((h2h_prob - 1/h2h_odds) * 100, 2)
+
+    # ── BTTS ─────────────────────────────────────────────────────────────────
+    btts_bet, btts_prob, btts_odds, btts_edge = None, 0.0, None, 0.0
+    if req.odds_btts_yes and req.odds_btts_no:
+        p_yes, p_no = _remove_vig([1/req.odds_btts_yes, 1/req.odds_btts_no])
+        if p_yes >= p_no:
+            btts_bet, btts_prob, btts_odds = "BTTS Yes", p_yes, req.odds_btts_yes
+        else:
+            btts_bet, btts_prob, btts_odds = "BTTS No", p_no, req.odds_btts_no
+        btts_edge = round((btts_prob - 1/btts_odds) * 100, 2)
+
+    # ── O/U 2.5 ──────────────────────────────────────────────────────────────
+    ou_bet, ou_prob, ou_odds, ou_edge = None, 0.0, None, 0.0
+    if req.odds_ou_over and req.odds_ou_under:
+        p_ov, p_un = _remove_vig([1/req.odds_ou_over, 1/req.odds_ou_under])
+        if p_ov >= p_un:
+            ou_bet, ou_prob, ou_odds = "Over 2.5", p_ov, req.odds_ou_over
+        else:
+            ou_bet, ou_prob, ou_odds = "Under 2.5", p_un, req.odds_ou_under
+        ou_edge = round((ou_prob - 1/ou_odds) * 100, 2)
+
+    # ── Corners ───────────────────────────────────────────────────────────────
+    cor_bet, cor_prob, cor_odds, cor_edge = None, 0.0, None, 0.0
+    if req.odds_corners_over and req.odds_corners_under:
+        p_co, p_cu = _remove_vig([1/req.odds_corners_over, 1/req.odds_corners_under])
+        if p_co >= p_cu:
+            cor_bet, cor_prob, cor_odds = "Over 9.5 Corners", p_co, req.odds_corners_over
+        else:
+            cor_bet, cor_prob, cor_odds = "Under 9.5 Corners", p_cu, req.odds_corners_under
+        cor_edge = round((cor_prob - 1/cor_odds) * 100, 2)
+
+    # ── Double Chance ─────────────────────────────────────────────────────────
+    dc_bet, dc_prob, dc_odds, dc_edge = None, 0.0, None, 0.0
+    if req.odds_dc_1x and req.odds_dc_x2 and req.odds_dc_12:
+        candidates_dc = [
+            ("1X", _remove_vig([1/req.odds_dc_1x, 1])[0], req.odds_dc_1x),
+            ("X2", _remove_vig([1/req.odds_dc_x2, 1])[0], req.odds_dc_x2),
+            ("12", _remove_vig([1/req.odds_dc_12, 1])[0], req.odds_dc_12),
+        ]
+        dc_bet, dc_prob, dc_odds = max(candidates_dc, key=lambda x: x[1])
+        dc_edge = round((dc_prob - 1/dc_odds) * 100, 2)
+
+    # ── Draw No Bet ───────────────────────────────────────────────────────────
+    dnb_bet, dnb_prob, dnb_odds, dnb_edge = None, 0.0, None, 0.0
+    if req.odds_dnb_home and req.odds_dnb_away:
+        p_dh, p_da = _remove_vig([1/req.odds_dnb_home, 1/req.odds_dnb_away])
+        if p_dh >= p_da:
+            dnb_bet, dnb_prob, dnb_odds = label_h, p_dh, req.odds_dnb_home
+        else:
+            dnb_bet, dnb_prob, dnb_odds = label_a, p_da, req.odds_dnb_away
+        dnb_edge = round((dnb_prob - 1/dnb_odds) * 100, 2)
+
+    confidence = 3.5  # Low — no historical ML data
+
+    return {
+        "match": f"{label_h} vs {label_a}",
+        "odds_based": True,
+        "raw_probabilities": {
+            "home": round(fp_home * 100, 2),
+            "draw": round(fp_draw * 100, 2),
+            "away": round(fp_away * 100, 2),
+            "btts_yes": round(btts_prob * 100, 2) if btts_bet == "BTTS Yes" else 0,
+            "btts_no": round(btts_prob * 100, 2) if btts_bet == "BTTS No" else 0,
+        },
+        "ensemble_probabilities": {
+            "home": round(fp_home * 100, 2),
+            "draw": round(fp_draw * 100, 2),
+            "away": round(fp_away * 100, 2),
+        },
+        "most_likely_outcome": h2h_bet,
+        "value_bet": {
+            "is_value": h2h_edge > 3.0,
+            "recommended_bet": h2h_bet,
+            "edge_percent": h2h_edge,
+            "model_probability": round(h2h_prob * 100, 2),
+            "final_prob_pct": round(h2h_prob * 100, 2),
+            "value_pct": h2h_edge,
+            "bookmaker_odds": h2h_odds,
+            "confidence_score": confidence,
+            "recommended_stake_percentage": _kelly_stake(h2h_prob, h2h_odds) if h2h_odds else 0.0,
+            "models_agreeing": 0,
+            "agreeing_model_names": [],
+            "reasoning": f"Odds-only prediction (no ML data for these teams). Fair probability after removing vig.",
+            "in_preferred_odds_range": False,
+        },
+        "btts_value_bet": {
+            "is_value": btts_edge > 3.0,
+            "recommended_bet": btts_bet,
+            "edge_percent": btts_edge,
+            "model_probability": round(btts_prob * 100, 2),
+            "bookmaker_odds": btts_odds,
+            "confidence_score": confidence,
+            "recommended_stake_percentage": _kelly_stake(btts_prob, btts_odds) if btts_odds else 0.0,
+        },
+        "ou_value_bet": {
+            "is_value": ou_edge > 3.0,
+            "recommended_bet": ou_bet,
+            "edge_percent": ou_edge,
+            "model_probability": round(ou_prob * 100, 2),
+            "bookmaker_odds": ou_odds,
+            "confidence_score": confidence,
+            "recommended_stake_percentage": _kelly_stake(ou_prob, ou_odds) if ou_odds else 0.0,
+        },
+        "corners_value_bet": {
+            "is_value": cor_edge > 3.0,
+            "recommended_bet": cor_bet,
+            "edge_percent": cor_edge,
+            "model_probability": round(cor_prob * 100, 2),
+            "bookmaker_odds": cor_odds,
+            "confidence_score": confidence,
+            "recommended_stake_percentage": _kelly_stake(cor_prob, cor_odds) if cor_odds else 0.0,
+        },
+        "dc_value_bet": {
+            "is_value": dc_edge > 3.0,
+            "recommended_bet": dc_bet,
+            "edge_percent": dc_edge,
+            "model_probability": round(dc_prob * 100, 2),
+            "bookmaker_odds": dc_odds,
+            "confidence_score": confidence,
+            "recommended_stake_percentage": _kelly_stake(dc_prob, dc_odds) if dc_odds else 0.0,
+        },
+        "dnb_value_bet": {
+            "is_value": dnb_edge > 3.0,
+            "recommended_bet": dnb_bet,
+            "edge_percent": dnb_edge,
+            "model_probability": round(dnb_prob * 100, 2),
+            "bookmaker_odds": dnb_odds,
+            "confidence_score": confidence,
+            "recommended_stake_percentage": _kelly_stake(dnb_prob, dnb_odds) if dnb_odds else 0.0,
+        },
+    }
+
+
 @app.post("/predict")
 def predict(req: PredictionRequest) -> Dict[str, Any]:
     known = list(team_states.keys()) if team_states else []
@@ -208,7 +378,8 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     away = resolve_team_name(req.away_team, known) or req.away_team
 
     if home not in team_states or away not in team_states:
-        raise HTTPException(status_code=404, detail=f"Team history not found: '{req.home_team}' / '{req.away_team}'. Cannot predict.")
+        logger.info(f"No ML data for '{req.home_team}'/'{req.away_team}' — using odds-only fallback.")
+        return predict_from_odds_only(req)
         
     h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
     a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
