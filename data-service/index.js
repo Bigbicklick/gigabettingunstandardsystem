@@ -92,9 +92,13 @@ async function initDB() {
         ai_dc_edge DECIMAL DEFAULT NULL,
         ai_dnb_forecast VARCHAR(50) DEFAULT NULL,
         ai_dnb_edge DECIMAL DEFAULT NULL,
+        ai_probability DECIMAL DEFAULT NULL,
         sent_to_discord BOOLEAN DEFAULT false
       );
     `);
+
+    // Add ai_probability to existing tables that were created before this column existed
+    await client.query(`ALTER TABLE matches ADD COLUMN IF NOT EXISTS ai_probability DECIMAL DEFAULT NULL;`);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS matches_basket (

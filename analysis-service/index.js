@@ -134,13 +134,17 @@ discordClient.on('messageCreate', async (message) => {
             const isOddsOnly = edge < -1.0 && (m.ai_btts_edge === null || parseFloat(m.ai_btts_edge) < 0);
             const sourceLabel = isOddsOnly ? '📊 Kursowe AI' : '🧠 ML AI';
 
-            // H2H fair probability
-            const h2hProbs = fairProb(m.odds_home, m.odds_draw, m.odds_away);
+            // H2H probability: prefer ML model_probability (stored), fall back to odds-based
             let winPct = null;
-            if (h2hProbs) {
-              if (m.ai_forecast === m.home_team)      winPct = h2hProbs[0];
-              else if (m.ai_forecast === 'Draw')      winPct = h2hProbs[1];
-              else if (m.ai_forecast === m.away_team) winPct = h2hProbs[2];
+            if (m.ai_probability !== null && m.ai_probability !== undefined) {
+              winPct = Math.round(parseFloat(m.ai_probability));
+            } else {
+              const h2hProbs = fairProb(m.odds_home, m.odds_draw, m.odds_away);
+              if (h2hProbs) {
+                if (m.ai_forecast === m.home_team)      winPct = h2hProbs[0];
+                else if (m.ai_forecast === 'Draw')      winPct = h2hProbs[1];
+                else if (m.ai_forecast === m.away_team) winPct = h2hProbs[2];
+              }
             }
             const winPctStr = winPct !== null ? ` — **${winPct}% szans**` : '';
             chunk += `> ${sourceLabel}: **${m.ai_forecast}** najprawdopodobniej wygra${winPctStr}\n`;
@@ -485,11 +489,12 @@ async function analyzeUpcomingMatches() {
               ai_dc_forecast = $9,
               ai_dc_edge = $10,
               ai_dnb_forecast = $11,
-          ai_dnb_edge = $12
-      WHERE fixture_id = $13
-    `, [
-      h2h ? h2h.recommended_bet : null, 
-      h2h ? h2h.edge_percent : null, 
+              ai_dnb_edge = $12,
+              ai_probability = $13
+          WHERE fixture_id = $14
+        `, [
+          h2h ? h2h.recommended_bet : null,
+          h2h ? h2h.edge_percent : null,
           btts ? btts.recommended_bet : null,
           btts ? btts.edge_percent : null,
           ou ? ou.recommended_bet : null,
@@ -500,6 +505,7 @@ async function analyzeUpcomingMatches() {
           dc ? dc.edge_percent : null,
           dnb ? dnb.recommended_bet : null,
           dnb ? dnb.edge_percent : null,
+          h2h ? h2h.model_probability : null,
           match.fixture_id
         ]);
         
