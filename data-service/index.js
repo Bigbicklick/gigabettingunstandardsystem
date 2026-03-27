@@ -8,14 +8,46 @@ const cron = require('node-cron');
 // 2. Basket, Tennis, Esport use The Odds API (optimized to exactly 5 requests per run).
 // 3. Runs every 8 hours instead of 2 hours, using precisely 450 requests/month (Fits 500 Quota).
 
-// Support comma-separated keys: THE_ODDS_API_KEYS=key1,key2,key3
-const _rawKeys = (process.env.THE_ODDS_API_KEYS || process.env.THE_ODDS_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
-const ODDS_API_KEYS = _rawKeys.length > 0 ? _rawKeys : ['e437116ef27159e682a544d52a8add2a'];
-let _keyIndex = 0;
-// Round-robin key rotation — automatically moves to next key on 401
-const getOddsKey = () => ODDS_API_KEYS[_keyIndex % ODDS_API_KEYS.length];
-const rotateOddsKey = () => { _keyIndex++; console.log(`Rotating to Odds API key index ${_keyIndex % ODDS_API_KEYS.length}`); };
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+
+// Dynamic key store — loads from DB at runtime, falls back to env var
+let _activeOddsKey = process.env.THE_ODDS_API_KEY || '';
+let _keyExhaustedNotified = false; // prevent spam — only notify once per exhaustion cycle
+
+async function loadActiveOddsKeyFromDB() {
+  try {
+    const client = await pool.connect();
+    const res = await client.query(`SELECT value FROM config WHERE key = 'the_odds_api_key' LIMIT 1`);
+    client.release();
+    if (res.rows.length > 0 && res.rows[0].value) {
+      if (res.rows[0].value !== _activeOddsKey) {
+        console.log('New Odds API key loaded from DB config.');
+        _activeOddsKey = res.rows[0].value;
+        _keyExhaustedNotified = false; // reset so new key is used freely
+      }
+    }
+  } catch (e) { /* config table may not exist yet on first boot */ }
+}
+
+function getOddsKey() { return _activeOddsKey; }
 const getRandomOddsKey = getOddsKey; // backward compat
+
+async function handleOdds401(context) {
+  console.log(`Odds API key exhausted (401) [${context}]. Notifying Discord...`);
+  if (!_keyExhaustedNotified && DISCORD_WEBHOOK_URL) {
+    _keyExhaustedNotified = true;
+    try {
+      await axios.post(DISCORD_WEBHOOK_URL, {
+        content: `⚠️ **Klucz The Odds API wygasł (401 Unauthorized)** [kontekst: ${context}]\n\n🔑 **Prześlij mi nowy klucz API** — wpisz go tutaj jako wiadomość (32 znaki).\nNp: \`abcdef1234567890abcdef1234567890\`\n\nBez nowego klucza koszyki NBA, tenis i esport nie będą się odświeżać.`
+      });
+    } catch (e) { console.error('Discord webhook notify failed:', e.message); }
+  }
+}
+
+function rotateOddsKey() {
+  // With single-key model, rotation just flags exhaustion — do nothing else
+  console.log('Odds key rotation triggered (no backup keys available).');
+}
 
 const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
 
@@ -115,7 +147,15 @@ async function initDB() {
       );
     `);
 
-    console.log('All 4 tables initialized successfully (matches, matches_basket, matches_tennis, matches_esport).');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS config (
+        key VARCHAR(100) PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    console.log('All 5 tables initialized successfully (matches, matches_basket, matches_tennis, matches_esport, config).');
   } catch (err) {
     console.error('Error initializing db', err);
   } finally {
@@ -397,10 +437,9 @@ async function fetchUpcomingBasketballMatches() {
     
   } catch (error) {
     if (error.response && error.response.status === 401) {
-       console.log('The Odds API Key exhausted (401) for Basketball. Rotating key...');
-       rotateOddsKey();
+      await handleOdds401('Basketball');
     } else {
-       console.error('Error fetching NBA odds:', error.message);
+      console.error('Error fetching NBA odds:', error.message);
     }
   }
 }
@@ -446,7 +485,12 @@ async function fetchUpcomingTennisMatches() {
           totalSaved++;
         } catch (e) { }
       }
-    } catch (e) { }
+    } catch (e) {
+      if (e.response && e.response.status === 401) {
+        await handleOdds401('Tennis');
+        break;
+      }
+    }
   }
   
   if (totalSaved > 0) console.log(`Saved ${totalSaved} Tennis matches.`);
@@ -503,8 +547,7 @@ async function fetchUpcomingEsportsMatches() {
       }
     } catch (e) {
       if (e.response && e.response.status === 401) {
-        console.log(`Odds API key exhausted (401) for ${sportKey}. Rotating...`);
-        rotateOddsKey();
+        await handleOdds401(`Esport:${sportKey}`);
         break; // stop trying more sport keys with exhausted key
       } else if (e.response && e.response.status === 404) {
         // Sport key doesn't exist — silently skip
@@ -519,24 +562,30 @@ async function fetchUpcomingEsportsMatches() {
 }
 
 
-async function start() {
-  await initDB();
-  await fetchUpcomingMatches(); // initial run
-  await fetchUpcomingBasketballMatches(); 
+async function runFetchCycle() {
+  await loadActiveOddsKeyFromDB(); // pick up any new key sent via Discord
+  await fetchUpcomingMatches();
+  await fetchUpcomingBasketballMatches();
   await fetchUpcomingTennisMatches();
   await fetchUpcomingEsportsMatches();
-  
-  // GIGA FIX: Run every 8 hours. 3 times per day. 
-  // 5 requests per run -> 15 requests per day. 450 requests per month. Safely inside 500 limit.
+}
+
+async function start() {
+  await initDB();
+  await runFetchCycle(); // initial run
+
+  // Run every 8 hours. Also poll DB for new key every cycle.
   cron.schedule('0 */8 * * *', () => {
     console.log('--- Triggering 8-Hour Fetch Cycle ---');
-    fetchUpcomingMatches();
-    fetchUpcomingBasketballMatches();
-    fetchUpcomingTennisMatches();
-    fetchUpcomingEsportsMatches();
+    runFetchCycle();
   });
-  
-  console.log('Data service started and safely scheduled to run every 8 hours (No more 429 Errors).');
+
+  // Poll DB for new key every 2 minutes (fast reaction when user sends key via Discord)
+  cron.schedule('*/2 * * * *', async () => {
+    await loadActiveOddsKeyFromDB();
+  });
+
+  console.log('Data service started. Fetch every 8h, key poll every 2min.');
 }
 
 // Ensure the process stays alive even without express

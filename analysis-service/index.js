@@ -29,8 +29,43 @@ const getEdgeAdvice = (edge) => {
     return "obstawiaj na to szczególnie, większe szanse 🔥";
 };
 
+// Regex: exactly 32 lowercase hex chars (The Odds API key format)
+const ODDS_KEY_REGEX = /^[a-f0-9]{32}$/i;
+
+async function saveNewOddsKeyToDB(newKey) {
+  const pgClient = await pool.connect();
+  try {
+    await pgClient.query(`
+      INSERT INTO config (key, value, updated_at)
+      VALUES ('the_odds_api_key', $1, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
+    `, [newKey]);
+  } finally {
+    pgClient.release();
+  }
+}
+
 discordClient.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+
+  // --- API KEY SWAP HANDLER ---
+  const trimmed = message.content.trim();
+  if (ODDS_KEY_REGEX.test(trimmed)) {
+    try {
+      await saveNewOddsKeyToDB(trimmed);
+      await message.reply(
+        `✅ **Nowy klucz API zapisany!**\n` +
+        `🔑 \`${trimmed.substring(0, 8)}...${trimmed.substring(24)}\`\n` +
+        `⏳ Bot wczyta go w ciągu **2 minut** i wznowi pobieranie danych NBA/tenis/esport automatycznie.\n` +
+        `Nie musisz nic więcej robić.`
+      );
+      console.log(`New Odds API key received from Discord user ${message.author.tag} and saved to DB.`);
+    } catch (e) {
+      console.error('Failed to save new Odds API key:', e.message);
+      await message.reply('❌ Błąd zapisu klucza do bazy danych. Sprawdź logi.');
+    }
+    return;
+  }
 
   if (message.content === 'betsfoot') {
      console.log('Received betsfoot command');
