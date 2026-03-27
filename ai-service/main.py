@@ -205,59 +205,41 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     home = find_best_team_match(home_raw, team_states)
     away = find_best_team_match(away_raw, team_states)
     
-    # Feature collection
     if not home or not away or home not in team_states or away not in team_states:
-        h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = 1.5, 13.0, 13.0, 100.0, 100.0, 40.0, 40.0, 0, 10
-        a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = 1.5, 13.0, 13.0, 100.0, 100.0, 40.0, 40.0, 0, 10
-        h_elo, a_elo = 1500.0, 1500.0
+        # PURE ODDS FALLBACK (For National Matches / Unknown Teams)
+        p_home = calculate_implied_prob(req.odds_home)
+        p_draw = calculate_implied_prob(req.odds_draw)
+        p_away = calculate_implied_prob(req.odds_away)
+        total_p = p_home + p_draw + p_away
+        if total_p > 0.0:
+            p_home, p_draw, p_away = p_home/total_p, p_draw/total_p, p_away/total_p
+        else:
+            p_home, p_draw, p_away = 0.5, 0.25, 0.25
+            
+        p_btts_yes = calculate_implied_prob(req.odds_btts_yes)
+        p_btts_no = calculate_implied_prob(req.odds_btts_no)
+        tot_btts = p_btts_yes + p_btts_no
+        if tot_btts > 0.0: p_btts_yes, p_btts_no = p_btts_yes/tot_btts, p_btts_no/tot_btts
+        else: p_btts_yes, p_btts_no = 0.5, 0.5
+        
+        p_ou_over = calculate_implied_prob(req.odds_ou_over)
+        p_ou_under = calculate_implied_prob(req.odds_ou_under)
+        tot_ou = p_ou_over + p_ou_under
+        if tot_ou > 0.0: p_ou_over, p_ou_under = p_ou_over/tot_ou, p_ou_under/tot_ou
+        else: p_ou_over, p_ou_under = 0.5, 0.5
+        
+        p_cor_over = calculate_implied_prob(req.odds_corners_over)
+        p_cor_under = calculate_implied_prob(req.odds_corners_under)
+        tot_cor = p_cor_over + p_cor_under
+        if tot_cor > 0.0: p_cor_over, p_cor_under = p_cor_over/tot_cor, p_cor_under/tot_cor
+        else: p_cor_over, p_cor_under = 0.5, 0.5
+        
+        poisson_btts_yes = p_btts_yes
+
     else:
+        # NORMAL XGBOOST PIPELINE FOR KNOWN CLUBS
         h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
         a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()
-        h_elo = team_states[home].elo
-        a_elo = team_states[away].elo
-
-    h_g = max(1, h_games)
-    a_g = max(1, a_games)
-    
-    h_attack = h_gs / h_g
-    h_defense = h_gc / h_g
-    a_attack = a_gs / a_g
-    a_defense = a_gc / a_g
-    
-    h_shot_attack = h_sh / h_g
-    h_shot_defense = h_sh_c / h_g
-    a_shot_attack = a_sh / a_g
-    a_shot_defense = a_sh_c / a_g
-    
-    h_sot_attack = h_sot / h_g
-    h_sot_defense = h_sot_c / h_g
-    a_sot_attack = a_sot / a_g
-    a_sot_defense = a_sot_c / a_g
-    
-    feature_row = [
-        float(h_pts), float(h_gs), float(h_gc), float(h_streak),
-        float(a_pts), float(a_gs), float(a_gc), float(a_streak),
-        float(h_pts - a_pts),
-        float((h_gs - h_gc) - (a_gs - a_gc)),
-        float(h_attack), float(h_defense),
-        float(a_attack), float(a_defense),
-        float(h_attack - a_defense), float(a_attack - h_defense),
-        float(h_shot_attack), float(h_shot_defense),
-        float(a_shot_attack), float(a_shot_defense),
-        float(h_sot_attack), float(h_sot_defense),
-        float(a_sot_attack), float(a_sot_defense),
-        float(h_sot_attack - a_sot_defense),
-        float(a_sot_attack - h_sot_defense),
-        float(h_elo), float(a_elo), float(h_elo - a_elo)
-    ]
-    
-    import math
-    def poisson_pdf(lam, k):
-        if lam <= 0: return 1.0 if k == 0 else 0.0
-        return math.exp(-lam) * (lam ** k) / math.factorial(k)
-        
-    poisson_btts_yes = 0.0
-    poisson_ou_over = 0.0
     for h_goals in range(7):
         for a_goals in range(7):
             p = poisson_pdf(h_attack, h_goals) * poisson_pdf(a_attack, a_goals)
