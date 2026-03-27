@@ -71,74 +71,101 @@ discordClient.on('messageCreate', async (message) => {
      console.log('Received betsfoot command');
      const pgClient = await pool.connect();
      try {
+        // 72h window, ALL matches — with or without AI forecast
         const res = await pgClient.query(`
-          SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
-          FROM matches 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
-          AND ai_forecast IS NOT NULL
+          SELECT home_team, away_team, date, league_name,
+                 odds_home, odds_draw, odds_away,
+                 ai_forecast, ai_edge,
+                 ai_btts_forecast, ai_btts_edge,
+                 ai_ou_forecast, ai_ou_edge,
+                 ai_corners_forecast, ai_corners_edge,
+                 ai_dc_forecast, ai_dc_edge,
+                 ai_dnb_forecast, ai_dnb_edge
+          FROM matches
+          WHERE date > NOW() AND date < NOW() + INTERVAL '72 hours'
+          ORDER BY date ASC
         `);
-        
+
         if (res.rows.length === 0) {
-          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma żadnych zbuforowanych meczów na najbliższe 24h z Free Tierowym Edge'm.");
+          return message.reply(
+            "ℹ️ **Brak nadchodzących meczów piłkarskich na najbliższe 72h.**\n" +
+            "Liga nie gra dziś ani jutro (typowy przerwa śródsezonu w tygodniu).\n" +
+            "Sprawdź w weekend — Premier League, La Liga, Bundesliga grają w sobotę/niedzielę."
+          );
         }
-        
-        let currentReport = "⚽ **AKTUALNE SKANOWANIE RYNKÓW NA ŻYCZENIE SZEFA** ⚽\n\n";
+
+        const formatEdge = (edge) => {
+          if (edge === null || edge === undefined) return '—';
+          if (edge <= 0) return `${edge}%`;
+          return `**+${edge}%** ✅`;
+        };
+        const formatOdds = (o) => o ? o.toFixed(2) : '-';
+
+        let currentReport = `⚽ **RAPORT PIŁKARSKI [XGBoost Ensemble AI]** ⚽\n📅 Najbliższe ${res.rows.length} mecz(y) — okno 72h\n\n`;
         const payloads = [];
-        
-        for (const m of res.rows) {
-             const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}% - ${getEdgeAdvice(edge)}`;
-
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
-             chunk += `> Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
-             chunk += `> Podwójna Szansa (DC): ${m.ai_dc_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_dc_edge)})\n`;
-             chunk += `> Remis Nie Ma Zakładu (DNB): ${m.ai_dnb_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_dnb_edge)})\n`;
-             chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_ou_edge)})\n`;
-             chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_btts_edge)})\n`;
-             chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_corners_edge)})\n\n`;
-             
-             if (currentReport.length + chunk.length > 1900) {
-                 payloads.push(currentReport);
-                 currentReport = chunk;
-             } else {
-                 currentReport += chunk;
-             }
-        }
-        
         let akoCandidates = [];
-        res.rows.forEach(m => {
-            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
-            if (m.ai_btts_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
-            if (m.ai_ou_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
+
+        for (const m of res.rows) {
+          const dt = new Date(m.date);
+          const dateStr = dt.toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: '2-digit' });
+          const timeStr = dt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+
+          let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
+          chunk += `> 📅 ${dateStr} ${timeStr}`;
+          if (m.league_name) chunk += ` | 🏆 ${m.league_name}`;
+          chunk += '\n';
+
+          if (m.odds_home || m.odds_draw || m.odds_away) {
+            chunk += `> 💰 Kursy: ${formatOdds(m.odds_home)} / ${formatOdds(m.odds_draw)} / ${formatOdds(m.odds_away)}\n`;
+          }
+
+          if (m.ai_forecast) {
+            chunk += `> 🧠 **AI: ${m.ai_forecast}** (Edge: ${formatEdge(m.ai_edge)})\n`;
+            if (m.ai_btts_forecast)    chunk += `> BTTS: ${m.ai_btts_forecast} (${formatEdge(m.ai_btts_edge)})\n`;
+            if (m.ai_ou_forecast)      chunk += `> Gole O/U: ${m.ai_ou_forecast} (${formatEdge(m.ai_ou_edge)})\n`;
+            if (m.ai_dc_forecast)      chunk += `> DC: ${m.ai_dc_forecast} (${formatEdge(m.ai_dc_edge)})\n`;
+            if (m.ai_dnb_forecast)     chunk += `> DNB: ${m.ai_dnb_forecast} (${formatEdge(m.ai_dnb_edge)})\n`;
+            if (m.ai_corners_forecast) chunk += `> Corners: ${m.ai_corners_forecast} (${formatEdge(m.ai_corners_edge)})\n`;
+
+            // AKO candidates
+            if (m.ai_edge > 3.0)         akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+            if (m.ai_btts_edge > 3.0)    akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
+            if (m.ai_ou_edge > 3.0)      akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
             if (m.ai_corners_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
-            if (m.ai_dc_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
-            if (m.ai_dnb_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dnb_forecast, edge: m.ai_dnb_edge });
-        });
-        
+            if (m.ai_dc_edge > 3.0)      akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
+          } else {
+            chunk += `> 🤖 AI: oczekiwanie na analizę...\n`;
+          }
+          chunk += '\n';
+
+          if (currentReport.length + chunk.length > 1900) {
+            payloads.push(currentReport);
+            currentReport = chunk;
+          } else {
+            currentReport += chunk;
+          }
+        }
+
+        // AKO coupon
         akoCandidates.sort((a, b) => b.edge - a.edge);
-        const topAko = akoCandidates.slice(0, 4);
-        
+        const topAko = [...new Map(akoCandidates.map(c => [c.match, c])).values()].slice(0, 4);
         if (topAko.length >= 2) {
-            let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
-            topAko.forEach((c, idx) => {
-               akoText += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${c.edge}%)\n`;
-            });
-            akoText += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
-            
-            if (currentReport.length + akoText.length > 1900) {
-                payloads.push(currentReport);
-                currentReport = akoText;
-            } else {
-                currentReport += akoText;
-            }
+          let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
+          topAko.forEach((c, i) => {
+            akoText += `${i + 1}. ${c.match} → **${c.pick}** (Edge: +${c.edge}%)\n`;
+          });
+          akoText += "💸 Postaw jako AKO dla większego zysku!\n";
+          if (currentReport.length + akoText.length > 1900) {
+            payloads.push(currentReport);
+            currentReport = akoText;
+          } else {
+            currentReport += akoText;
+          }
         }
 
-        if (currentReport.trim().length > 0) {
-             payloads.push(currentReport);
-        }
+        if (currentReport.trim().length > 0) payloads.push(currentReport);
+        for (const payload of payloads) await message.reply(payload);
 
-        for (const payload of payloads) {
-             await message.reply(payload);
-        }
      } catch(e) {
         console.error(e);
         return message.reply("Wystąpił błąd podczas pobierania meczów (Database I/O).");

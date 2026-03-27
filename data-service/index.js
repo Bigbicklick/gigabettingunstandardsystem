@@ -174,13 +174,12 @@ async function fetchUpcomingMatches() {
   
   // To cover 48 hours without hitting rate limits via date queries, we fetch next 2 days
   const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  
-  const datesToFetch = [
-    today.toISOString().split('T')[0],
-    tomorrow.toISOString().split('T')[0]
-  ];
+  const datesToFetch = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i);
+    datesToFetch.push(d.toISOString().split('T')[0]);
+  }
   
   // Target Leagues — domestic + UEFA club competitions only.
   // National team leagues (Friendlies/WC/Euro) excluded: teams not in ML training data.
