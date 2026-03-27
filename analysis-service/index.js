@@ -103,6 +103,14 @@ discordClient.on('messageCreate', async (message) => {
         };
         const formatOdds = (o) => o ? parseFloat(o).toFixed(2) : '-';
 
+        // Fair probability after removing bookmaker vig
+        const fairProb = (...odds) => {
+          const parsed = odds.map(o => o ? 1 / parseFloat(o) : 0);
+          const total = parsed.reduce((s, p) => s + p, 0);
+          if (total <= 0) return null;
+          return parsed.map(p => Math.round(p / total * 100));
+        };
+
         let currentReport = `⚽ **RAPORT PIŁKARSKI [XGBoost Ensemble AI]** ⚽\n📅 Najbliższe ${res.rows.length} mecz(y) — okno 72h\n\n`;
         const payloads = [];
         let akoCandidates = [];
@@ -126,15 +134,40 @@ discordClient.on('messageCreate', async (message) => {
             const isOddsOnly = edge < -1.0 && (m.ai_btts_edge === null || parseFloat(m.ai_btts_edge) < 0);
             const sourceLabel = isOddsOnly ? '📊 Kursowe AI' : '🧠 ML AI';
 
-            // Win prediction line — always show who will likely win
-            chunk += `> ${sourceLabel}: **${m.ai_forecast}** najprawdopodobniej wygra\n`;
+            // H2H fair probability
+            const h2hProbs = fairProb(m.odds_home, m.odds_draw, m.odds_away);
+            let winPct = null;
+            if (h2hProbs) {
+              if (m.ai_forecast === m.home_team)      winPct = h2hProbs[0];
+              else if (m.ai_forecast === 'Draw')      winPct = h2hProbs[1];
+              else if (m.ai_forecast === m.away_team) winPct = h2hProbs[2];
+            }
+            const winPctStr = winPct !== null ? ` — **${winPct}% szans**` : '';
+            chunk += `> ${sourceLabel}: **${m.ai_forecast}** najprawdopodobniej wygra${winPctStr}\n`;
 
-            // Sub-markets
-            if (m.ai_btts_forecast)    chunk += `> ⚽ BTTS: **${m.ai_btts_forecast}**\n`;
-            if (m.ai_ou_forecast)      chunk += `> 🥅 Gole O/U: **${m.ai_ou_forecast}**\n`;
-            if (m.ai_corners_forecast) chunk += `> 🚩 Corners: **${m.ai_corners_forecast}**\n`;
-            if (m.ai_dc_forecast)      chunk += `> 🛡️ DC: **${m.ai_dc_forecast}**\n`;
-            if (m.ai_dnb_forecast)     chunk += `> ⚖️ DNB: **${m.ai_dnb_forecast}**\n`;
+            // BTTS with %
+            if (m.ai_btts_forecast) {
+              const bttsProbs = fairProb(m.odds_btts_yes, m.odds_btts_no);
+              const bttsPct = bttsProbs ? (m.ai_btts_forecast === 'BTTS Yes' ? bttsProbs[0] : bttsProbs[1]) : null;
+              chunk += `> ⚽ BTTS: **${m.ai_btts_forecast}**${bttsPct !== null ? ` (${bttsPct}% szans)` : ''}\n`;
+            }
+
+            // O/U with %
+            if (m.ai_ou_forecast) {
+              const ouProbs = fairProb(m.odds_ou_over, m.odds_ou_under);
+              const ouPct = ouProbs ? (m.ai_ou_forecast.includes('Over') ? ouProbs[0] : ouProbs[1]) : null;
+              chunk += `> 🥅 Gole O/U: **${m.ai_ou_forecast}**${ouPct !== null ? ` (${ouPct}% szans)` : ''}\n`;
+            }
+
+            // Corners with %
+            if (m.ai_corners_forecast) {
+              const corProbs = fairProb(m.odds_corners_over, m.odds_corners_under);
+              const corPct = corProbs ? (m.ai_corners_forecast.includes('Over') ? corProbs[0] : corProbs[1]) : null;
+              chunk += `> 🚩 Corners: **${m.ai_corners_forecast}**${corPct !== null ? ` (${corPct}% szans)` : ''}\n`;
+            }
+
+            if (m.ai_dc_forecast)  chunk += `> 🛡️ DC: **${m.ai_dc_forecast}**\n`;
+            if (m.ai_dnb_forecast) chunk += `> ⚖️ DNB: **${m.ai_dnb_forecast}**\n`;
 
             // Value summary line
             if (edge >= 5.0) {
