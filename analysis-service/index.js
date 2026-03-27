@@ -56,6 +56,9 @@ discordClient.on('messageCreate', async (message) => {
                  let o = parseFloat(odds);
                  if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
                  if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
+                 
+                 if (o <= 1.40 && e > -6.0 && e < 3.0) return `🛡️ PEWNIAK DO AKO (Kurs: ${o.toFixed(2)}, Edge: ${e.toFixed(2)}%)`;
+                 
                  if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
                  let k = ((e / 100) / (o - 1)) * 100;
                  return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
@@ -160,6 +163,9 @@ discordClient.on('messageCreate', async (message) => {
                  let o = parseFloat(odds);
                  if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
                  if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
+                 
+                 if (o <= 1.40 && e > -6.0 && e < 3.0) return `🛡️ PEWNIAK DO AKO (Kurs: ${o.toFixed(2)}, Edge: ${e.toFixed(2)}%)`;
+                 
                  if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
                  let k = ((e / 100) / (o - 1)) * 100;
                  return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
@@ -243,6 +249,9 @@ discordClient.on('messageCreate', async (message) => {
                  let o = parseFloat(odds);
                  if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
                  if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
+                 
+                 if (o <= 1.40 && e > -6.0 && e < 3.0) return `🛡️ PEWNIAK DO AKO (Kurs: ${o.toFixed(2)}, Edge: ${e.toFixed(2)}%)`;
+                 
                  if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
                  let k = ((e / 100) / (o - 1)) * 100;
                  return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
@@ -297,6 +306,9 @@ discordClient.on('messageCreate', async (message) => {
                  let o = parseFloat(odds);
                  if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
                  if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
+                 
+                 if (o <= 1.40 && e > -6.0 && e < 3.0) return `🛡️ PEWNIAK DO AKO (Kurs: ${o.toFixed(2)}, Edge: ${e.toFixed(2)}%)`;
+                 
                  if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
                  let k = ((e / 100) / (o - 1)) * 100;
                  return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
