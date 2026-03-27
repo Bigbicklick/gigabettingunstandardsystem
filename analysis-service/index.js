@@ -122,12 +122,30 @@ discordClient.on('messageCreate', async (message) => {
           }
 
           if (m.ai_forecast) {
-            chunk += `> 🧠 **AI: ${m.ai_forecast}** (Edge: ${formatEdge(m.ai_edge)})\n`;
-            if (m.ai_btts_forecast)    chunk += `> BTTS: ${m.ai_btts_forecast} (${formatEdge(m.ai_btts_edge)})\n`;
-            if (m.ai_ou_forecast)      chunk += `> Gole O/U: ${m.ai_ou_forecast} (${formatEdge(m.ai_ou_edge)})\n`;
-            if (m.ai_dc_forecast)      chunk += `> DC: ${m.ai_dc_forecast} (${formatEdge(m.ai_dc_edge)})\n`;
-            if (m.ai_dnb_forecast)     chunk += `> DNB: ${m.ai_dnb_forecast} (${formatEdge(m.ai_dnb_edge)})\n`;
-            if (m.ai_corners_forecast) chunk += `> Corners: ${m.ai_corners_forecast} (${formatEdge(m.ai_corners_edge)})\n`;
+            const edge = parseFloat(m.ai_edge) || 0;
+            const isOddsOnly = edge < -1.0 && (m.ai_btts_edge === null || parseFloat(m.ai_btts_edge) < 0);
+            const sourceLabel = isOddsOnly ? '📊 Kursowe AI' : '🧠 ML AI';
+
+            // Win prediction line — always show who will likely win
+            chunk += `> ${sourceLabel}: **${m.ai_forecast}** najprawdopodobniej wygra\n`;
+
+            // Sub-markets
+            if (m.ai_btts_forecast)    chunk += `> ⚽ BTTS: **${m.ai_btts_forecast}**\n`;
+            if (m.ai_ou_forecast)      chunk += `> 🥅 Gole O/U: **${m.ai_ou_forecast}**\n`;
+            if (m.ai_corners_forecast) chunk += `> 🚩 Corners: **${m.ai_corners_forecast}**\n`;
+            if (m.ai_dc_forecast)      chunk += `> 🛡️ DC: **${m.ai_dc_forecast}**\n`;
+            if (m.ai_dnb_forecast)     chunk += `> ⚖️ DNB: **${m.ai_dnb_forecast}**\n`;
+
+            // Value summary line
+            if (edge >= 5.0) {
+              chunk += `> 💎 **GRAMY: ${m.ai_forecast} @ ${formatOdds(m.odds_home)} (Edge: +${edge}%)** 🔥\n`;
+            } else if (edge >= 3.0) {
+              chunk += `> 💎 Value: **+${edge}%** ✅ — warto rozważyć\n`;
+            } else if (edge >= 0) {
+              chunk += `> 💎 Edge: +${edge}% 🟡 — neutralny\n`;
+            } else {
+              chunk += `> 💎 Brak value betu (edge: ${edge}%) — kurs rynkowy\n`;
+            }
 
             // AKO candidates
             if (m.ai_edge > 3.0)         akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
