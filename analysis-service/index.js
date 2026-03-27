@@ -41,7 +41,6 @@ discordClient.on('messageCreate', async (message) => {
                  odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under, odds_dc_1x, odds_dc_x2, odds_dc_12, odds_dnb_home, odds_dnb_away
           FROM matches 
           WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
-          AND ai_forecast IS NOT NULL
         `);
         
         if (res.rows.length === 0) {
@@ -63,7 +62,7 @@ discordClient.on('messageCreate', async (message) => {
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
              let sel_odds_h2h = m.ai_forecast === m.home_team ? m.odds_home : (m.ai_forecast === 'Draw' ? m.odds_draw : m.odds_away);
-             chunk += `> Zwycięzca: ${m.ai_forecast || 'Brak'} -> ${makeDecision(m.ai_edge, sel_odds_h2h)}\n`;
+             chunk += `> Zwycięzca: ${m.ai_forecast || 'Analiza...'} -> ${makeDecision(m.ai_edge, sel_odds_h2h)}\n`;
              
              let sel_odds_dc = m.ai_dc_forecast === '1X' ? m.odds_dc_1x : (m.ai_dc_forecast === 'X2' ? m.odds_dc_x2 : m.odds_dc_12);
              chunk += `> Podwójna Szansa (DC): ${m.ai_dc_forecast || 'Brak'} -> ${makeDecision(m.ai_dc_edge, sel_odds_dc)}\n`;
@@ -414,8 +413,8 @@ async function analyzeUpcomingMatches() {
           ai_dnb_edge = $12
       WHERE fixture_id = $13
     `, [
-      h2h ? h2h.recommended_bet : null, 
-      h2h ? h2h.edge_percent : null, 
+      h2h && h2h.recommended_bet ? h2h.recommended_bet : (prediction.most_likely_outcome || null), 
+      h2h ? h2h.edge_percent : 0.0, 
           btts ? btts.recommended_bet : null,
           btts ? btts.edge_percent : null,
           ou ? ou.recommended_bet : null,

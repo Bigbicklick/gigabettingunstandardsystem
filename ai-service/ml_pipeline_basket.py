@@ -210,17 +210,26 @@ def predict_basket_match(home_team, away_team, odds_home=None, odds_away=None):
     3. Apply rest days micro-adjustment (max ±3%)
     """
     if not os.path.exists(BASKET_STATE_FILE):
-        # No Elo state — fall back to pure odds
-        if odds_home and odds_away and odds_home > 0 and odds_away > 0:
-            implied_home = (1.0 / odds_home)
-            implied_away = (1.0 / odds_away)
-            total = implied_home + implied_away
-            fair_home = implied_home / total
-            if fair_home > 0.5:
-                return {"recommended_bet": "Home Win", "model_probability": round(fair_home * 100, 2), "edge_percent": 0.0, "is_value": False}
-            else:
-                return {"recommended_bet": "Away Win", "model_probability": round((1 - fair_home) * 100, 2), "edge_percent": 0.0, "is_value": False}
-        return {"recommended_bet": "Pending...", "edge_percent": 0.0, "is_value": False}
+        # No Elo state — fall back to pure odds with 1% market-efficiency adjustment
+        if odds_home and odds_away and float(odds_home) > 0 and float(odds_away) > 0:
+            implied_h = 1.0 / float(odds_home)
+            implied_a = 1.0 / float(odds_away)
+            total = implied_h + implied_a
+            fair_h = implied_h / total
+            
+            # Without ELO, we assume the market is mostly right but favor the favorite slightly 
+            # (favorite-longshot bias happens in some markets, but in NBA favorites are often undervalued)
+            adj = 0.01 if fair_h > 0.5 else -0.01
+            prob_h = fair_h + adj
+            edge = (prob_h - implied_h) * 100
+            
+            return {
+                "recommended_bet": "Home Win" if prob_h > 0.5 else "Away Win",
+                "model_probability": round(prob_h * 100, 2),
+                "edge_percent": round(edge if prob_h > 0.5 else (1-prob_h-implied_a)*100, 2),
+                "is_value": abs(edge) > 3.0
+            }
+        return {"recommended_bet": "Analysis Pending", "model_probability": 50.0, "edge_percent": 0.0, "is_value": False}
 
     state = joblib.load(BASKET_STATE_FILE)
     elos = state['elos']

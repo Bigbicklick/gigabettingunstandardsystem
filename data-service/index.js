@@ -119,30 +119,39 @@ async function fetchUpcomingMatches() {
   console.log('Connecting to The Odds API to grab upcoming FOOTBALL fixtures & odds (Replacing API-Football)...');
   
   try {
-    const soccerKeys = [
-        'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 
-        'soccer_germany_bundesliga', 'soccer_france_ligue_one', 
-        'soccer_uefa_champs_league', 'soccer_uefa_europa_league',
-        'soccer_netherlands_eredivisie', 'soccer_portugal_primeira_liga',
-        'soccer_fifa_world_cup_qualifiers', 'soccer_uefa_nations_league'
-    ];
+    // Step 1: Get all active soccer sports dynamically
+    const sportsRes = await axios.get('https://api.the-odds-api.com/v4/sports', {
+        params: { apiKey: ODDS_API_KEY }
+    });
+    const soccerSports = sportsRes.data.filter(s => s.group === 'Soccer' && s.active);
     
+    if (soccerSports.length === 0) {
+      console.log('No active Soccer tournaments found in The Odds API right now.');
+      return;
+    }
+    console.log(`Found ${soccerSports.length} active Soccer tournaments: ${soccerSports.map(s => s.title).join(', ')}`);
+
     let allMatches = [];
-    for (const sKey of soccerKeys) {
+    for (const sport of soccerSports) {
         try {
-            const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${sKey}/odds/`, {
+            const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${sport.key}/odds/`, {
                 params: {
-                    apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h,spreads,totals', oddsFormat: 'decimal'
+                    apiKey: ODDS_API_KEY, 
+                    regions: 'eu,uk', 
+                    markets: 'h2h,spreads,totals', 
+                    oddsFormat: 'decimal'
                 }
             });
             if (res.data && Array.isArray(res.data)) {
                 allMatches = allMatches.concat(res.data);
             }
-        } catch(e) { } // ignoruj gdy liga nie gra
+        } catch(e) { 
+            console.log(`Skipping ${sport.title}: ${e.message}`);
+        }
     }
     
     if (allMatches.length === 0) {
-      console.log('No fixtures found from The Odds API today or tomorrow (football).');
+      console.log('No fixtures found from The Odds API today or tomorrow across any soccer league.');
       return;
     }
     
