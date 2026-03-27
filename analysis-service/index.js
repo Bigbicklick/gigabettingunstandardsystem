@@ -53,7 +53,7 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
-                 if (!e || e <= 0 || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge)";
+                 if (!e || isNaN(e) || e < 3.0) return "❌ Pomiń (Brak edge)";
                  let o = parseFloat(odds);
                  if (!o || o <= 1.0) return "❌ Pomiń (Brak kursu)";
                  let k = ((e / 100) / (o - 1)) * 100;
@@ -157,7 +157,7 @@ discordClient.on('messageCreate', async (message) => {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
                  if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
-                 if (e <= 0) return `❌ Pomiń (Ujemne Edge: ${e.toFixed(2)}%)`;
+                 if (e < 3.0) return `❌ Pomiń (Słabe Edge: ${e.toFixed(2)}%)`;
                  let o = parseFloat(odds);
                  if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: Oblicz na podstawie bukmachera)`;
                  let k = ((e / 100) / (o - 1)) * 100;
@@ -240,7 +240,7 @@ discordClient.on('messageCreate', async (message) => {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
                  if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
-                 if (e <= 0) return `❌ Pomiń (Ujemne Edge: ${e.toFixed(2)}%)`;
+                 if (e < 3.0) return `❌ Pomiń (Słabe Edge: ${e.toFixed(2)}%)`;
                  let o = parseFloat(odds);
                  if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: ?)`;
                  let k = ((e / 100) / (o - 1)) * 100;
@@ -294,7 +294,7 @@ discordClient.on('messageCreate', async (message) => {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
                  if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
-                 if (e <= 0) return `❌ Pomiń (Ujemne Edge: ${e.toFixed(2)}%)`;
+                 if (e < 3.0) return `❌ Pomiń (Słabe Edge: ${e.toFixed(2)}%)`;
                  let o = parseFloat(odds);
                  if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: ?)`;
                  let k = ((e / 100) / (o - 1)) * 100;
@@ -493,19 +493,19 @@ async function analyzeUpcomingMatches() {
           ai_dnb_edge = $12
       WHERE fixture_id = $13
     `, [
-      h2h && h2h.recommended_bet ? h2h.recommended_bet : (prediction.most_likely_outcome || null), 
+      (() => { const ml = prediction.most_likely || {}; return h2h && h2h.edge_percent >= 3.0 ? h2h.recommended_bet : (ml.h2h || prediction.most_likely_outcome || null); })(),
       h2h ? h2h.edge_percent : 0.0, 
-          btts ? btts.recommended_bet : null,
-          btts ? btts.edge_percent : null,
-          ou ? ou.recommended_bet : null,
-          ou ? ou.edge_percent : null,
-          cor ? cor.recommended_bet : null,
-          cor ? cor.edge_percent : null,
-          dc ? dc.recommended_bet : null,
-          dc ? dc.edge_percent : null,
-          dnb ? dnb.recommended_bet : null,
-          dnb ? dnb.edge_percent : null,
-          match.fixture_id
+      (() => { const ml = prediction.most_likely || {}; return btts && btts.edge_percent >= 3.0 ? btts.recommended_bet : (ml.btts || null); })(),
+      btts ? btts.edge_percent : 0.0,
+      (() => { const ml = prediction.most_likely || {}; return ou && ou.edge_percent >= 3.0 ? ou.recommended_bet : (ml.ou || null); })(),
+      ou ? ou.edge_percent : 0.0,
+      (() => { const ml = prediction.most_likely || {}; return cor && cor.edge_percent >= 3.0 ? cor.recommended_bet : (ml.corners || null); })(),
+      cor ? cor.edge_percent : 0.0,
+      (() => { const ml = prediction.most_likely || {}; return dc && dc.edge_percent >= 3.0 ? dc.recommended_bet : (ml.dc || null); })(),
+      dc ? dc.edge_percent : 0.0,
+      (() => { const ml = prediction.most_likely || {}; return dnb && dnb.edge_percent >= 3.0 ? dnb.recommended_bet : (ml.dnb || null); })(),
+      dnb ? dnb.edge_percent : 0.0,
+      match.fixture_id
         ]);
         
       } catch (aiError) {

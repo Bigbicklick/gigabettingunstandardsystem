@@ -394,6 +394,14 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             "home": round(p_home * 100, 2), "draw": round(p_draw * 100, 2), "away": round(p_away * 100, 2),
             "btts_yes": round(p_btts_yes * 100, 2), "btts_no": round(p_btts_no * 100, 2)
         },
+        "most_likely": {
+            "h2h": str(prediction_label),
+            "btts": "Yes" if p_btts_yes > p_btts_no else "No",
+            "ou": "Over 2.5 Goals" if p_ou_over > p_ou_under else "Under 2.5 Goals",
+            "corners": "Over 9.5 Corners" if p_cor_over > p_cor_under else "Under 9.5 Corners",
+            "dc": "1X" if (p_home+p_draw) > max(p_away+p_draw, p_home+p_away) else ("X2" if (p_away+p_draw) > (p_home+p_away) else "12"),
+            "dnb": home_raw if p_home > p_away else away_raw
+        },
         "most_likely_outcome": str(prediction_label),
         "value_bet": {
             "is_value": bool(value_bet), "recommended_bet": str(best_bet) if best_bet else None,
