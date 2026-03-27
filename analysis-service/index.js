@@ -37,47 +37,29 @@ discordClient.on('messageCreate', async (message) => {
      const pgClient = await pool.connect();
      try {
         const res = await pgClient.query(`
-          SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge,
-                 odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under, odds_dc_1x, odds_dc_x2, odds_dc_12, odds_dnb_home, odds_dnb_away
+          SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
           FROM matches 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+          WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
+          AND ai_forecast IS NOT NULL
         `);
         
         if (res.rows.length === 0) {
-          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma żadnych zbuforowanych meczów na najbliższe 48h z Free Tierowym Edge'm.");
+          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma żadnych zbuforowanych meczów na najbliższe 24h z Free Tierowym Edge'm.");
         }
         
         let currentReport = "⚽ **AKTUALNE SKANOWANIE RYNKÓW NA ŻYCZENIE SZEFA** ⚽\n\n";
         const payloads = [];
         
         for (const m of res.rows) {
-             const makeDecision = (edge, odds) => {
-                 let e = parseFloat(edge);
-                 if (isNaN(e) || e <= 0.0) return "❌ Pomiń (Brak edge)";
-                 let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e.toFixed(2)}%)`;
-                 let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
-             };
+             const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}% - ${getEdgeAdvice(edge)}`;
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
-             let sel_odds_h2h = m.ai_forecast === m.home_team ? m.odds_home : (m.ai_forecast === 'Draw' ? m.odds_draw : m.odds_away);
-             chunk += `> Zwycięzca: ${m.ai_forecast || 'Analiza...'} -> ${makeDecision(m.ai_edge, sel_odds_h2h)}\n`;
-             
-             let sel_odds_dc = m.ai_dc_forecast === '1X' ? m.odds_dc_1x : (m.ai_dc_forecast === 'X2' ? m.odds_dc_x2 : m.odds_dc_12);
-             chunk += `> Podwójna Szansa (DC): ${m.ai_dc_forecast || 'Brak'} -> ${makeDecision(m.ai_dc_edge, sel_odds_dc)}\n`;
-             
-             let sel_odds_dnb = m.ai_dnb_forecast === m.home_team ? m.odds_dnb_home : m.odds_dnb_away;
-             chunk += `> Remis Nie Ma Zakładu (DNB): ${m.ai_dnb_forecast || 'Brak'} -> ${makeDecision(m.ai_dnb_edge, sel_odds_dnb)}\n`;
-             
-             let sel_odds_ou = m.ai_ou_forecast === 'Over 2.5' ? m.odds_ou_over : m.odds_ou_under;
-             chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} -> ${makeDecision(m.ai_ou_edge, sel_odds_ou)}\n`;
-             
-             let sel_odds_btts = m.ai_btts_forecast === 'Yes' ? m.odds_btts_yes : m.odds_btts_no;
-             chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} -> ${makeDecision(m.ai_btts_edge, sel_odds_btts)}\n`;
-             
-             let sel_odds_cor = m.ai_corners_forecast && m.ai_corners_forecast.includes('Over') ? m.odds_corners_over : m.odds_corners_under;
-             chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} -> ${makeDecision(m.ai_corners_edge, sel_odds_cor)}\n\n`;
+             chunk += `> Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
+             chunk += `> Podwójna Szansa (DC): ${m.ai_dc_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_dc_edge)})\n`;
+             chunk += `> Remis Nie Ma Zakładu (DNB): ${m.ai_dnb_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_dnb_edge)})\n`;
+             chunk += `> Gole O/U: ${m.ai_ou_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_ou_edge)})\n`;
+             chunk += `> BTTS: ${m.ai_btts_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_btts_edge)})\n`;
+             chunk += `> Corners: ${m.ai_corners_forecast || 'Brak'} (Edge: ${formatEdge(m.ai_corners_edge)})\n\n`;
              
              if (currentReport.length + chunk.length > 1900) {
                  payloads.push(currentReport);
@@ -89,24 +71,16 @@ discordClient.on('messageCreate', async (message) => {
         
         let akoCandidates = [];
         res.rows.forEach(m => {
-            if (m.ai_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
-            if (m.ai_btts_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
-            if (m.ai_ou_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
-            if (m.ai_corners_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
-            if (m.ai_dc_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
-            if (m.ai_dnb_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dnb_forecast, edge: m.ai_dnb_edge });
+            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+            if (m.ai_btts_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
+            if (m.ai_ou_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
+            if (m.ai_corners_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
+            if (m.ai_dc_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
+            if (m.ai_dnb_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dnb_forecast, edge: m.ai_dnb_edge });
         });
         
         akoCandidates.sort((a, b) => b.edge - a.edge);
-        const uniqueAko = [];
-        const seenMatches = new Set();
-        for (const c of akoCandidates) {
-            if (!seenMatches.has(c.match)) {
-                uniqueAko.push(c);
-                seenMatches.add(c.match);
-            }
-        }
-        const topAko = uniqueAko.slice(0, 4);
+        const topAko = akoCandidates.slice(0, 4);
         
         if (topAko.length >= 2) {
             let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
@@ -143,33 +117,24 @@ discordClient.on('messageCreate', async (message) => {
         const res = await pgClient.query(`
           SELECT home_team, away_team, odds_home, odds_away, odds_spread_home, odds_spread_away, odds_totals_over, ai_forecast, ai_edge
           FROM matches_basket 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '7 days'
+          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
         `);
         
         if (res.rows.length === 0) {
-          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów NBA na najbliższe 7 dni.");
+          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów NBA na najbliższe 48h.");
         }
         
         let currentReport = "🏀 **KURSOWY RAPORT NBA [Multi-Regional API: Phase 10]** 🏀🔥\nThe Giga Brain: Live XGBoost Engine\n\n";
         const payloads = [];
         
         for (const m of res.rows) {
-             const makeDecision = (edge, odds) => {
-                 let e = parseFloat(edge);
-                 if (isNaN(e) || e <= 0.0) return "❌ Pomiń (Brak edge)";
-                 let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e.toFixed(2)}%)`;
-                 let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
-             };
+             const formatEdge = (edge) => (!edge || edge <= 0) ? '0%' : `${edge}%`;
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
              chunk += `> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n`;
              if (m.odds_spread_home) chunk += `> Spread Home: ${m.odds_spread_home}\n`;
              if (m.odds_totals_over) chunk += `> Totals Over: ${m.odds_totals_over}\n`;
-             
-             let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
-             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
+             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${formatEdge(m.ai_edge)})\n\n`;
              
              if (currentReport.length + chunk.length > 1900) {
                  payloads.push(currentReport);
@@ -179,36 +144,6 @@ discordClient.on('messageCreate', async (message) => {
              }
         }
         
-        let akoCandidates = [];
-        res.rows.forEach(m => {
-            if (m.ai_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
-        });
-        akoCandidates.sort((a, b) => b.edge - a.edge);
-        const uniqueAko = [];
-        const seenMatches = new Set();
-        for (const c of akoCandidates) {
-            if (!seenMatches.has(c.match)) {
-                uniqueAko.push(c);
-                seenMatches.add(c.match);
-            }
-        }
-        const topAko = uniqueAko.slice(0, 4);
-        
-        if (topAko.length >= 2) {
-            let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
-            topAko.forEach((c, idx) => {
-               akoText += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${parseFloat(c.edge).toFixed(2)}%)\n`;
-            });
-            akoText += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
-            
-            if (currentReport.length + akoText.length > 1900) {
-                payloads.push(currentReport);
-                currentReport = akoText;
-            } else {
-                currentReport += akoText;
-            }
-        }
-
         if (currentReport.trim().length > 0) {
              payloads.push(currentReport);
         }
@@ -229,46 +164,17 @@ discordClient.on('messageCreate', async (message) => {
         const res = await pgClient.query(`
           SELECT home_team, away_team, odds_home, odds_away, ai_forecast, ai_edge
           FROM matches_tennis 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '7 days'
+          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
         `);
-        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Tenisa (ATP) na najbliższe 7 dni.");
+        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Tenisa (ATP) na najbliższe 48h.");
         
         let cr = "🎾 **KURSOWY RAPORT TENIS [Multi-Regional ATP: Phase 10]** 🎾🔥\nTheSportsDB Live XGBoost Fetch\n\n";
         const payloads = [];
         for (const m of res.rows) {
-             const makeDecision = (edge, odds) => {
-                 let e = parseFloat(edge);
-                 if (isNaN(e) || e <= 0.0) return "❌ Pomiń (Brak edge)";
-                 let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e.toFixed(2)}%)`;
-                 let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
-             };
-             let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
+             const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
-        let akoCandidates = [];
-        res.rows.forEach(m => {
-            if (m.ai_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
-        });
-        akoCandidates.sort((a, b) => b.edge - a.edge);
-        const uniqueAko = [];
-        const seenMatches = new Set();
-        for (const c of akoCandidates) {
-            if (!seenMatches.has(c.match)) {
-                uniqueAko.push(c);
-                seenMatches.add(c.match);
-            }
-        }
-        const topAko = uniqueAko.slice(0, 4);
-        if (topAko.length >= 2) {
-            let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
-            topAko.forEach((c, idx) => akoText += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${parseFloat(c.edge).toFixed(2)}%)\n`);
-            akoText += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
-            if (cr.length + akoText.length > 1900) { payloads.push(cr); cr = akoText; } else cr += akoText;
-        }
-
         if (cr.trim().length > 0) payloads.push(cr);
         for (const p of payloads) await message.reply(p);
      } catch(e) {
@@ -282,50 +188,21 @@ discordClient.on('messageCreate', async (message) => {
         const res = await pgClient.query(`
           SELECT home_team, away_team, odds_home, odds_away, ai_forecast, ai_edge
           FROM matches_esport 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '7 days'
+          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
         `);
-        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Esportu (CS2/LoL) na najbliższe 7 dni.");
+        if (res.rows.length === 0) return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów Esportu (CS2/LoL) na najbliższe 48h.");
         
         let cr = "🎮 **KURSOWY RAPORT ESPORT [Multi-Regional: Phase 10]** 🎮🔥\nTheSportsDB Live AI Engine\n\n";
         const payloads = [];
         for (const m of res.rows) {
-             const makeDecision = (edge, odds) => {
-                 let e = parseFloat(edge);
-                 if (isNaN(e) || e <= 0.0) return "❌ Pomiń (Brak edge)";
-                 let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e.toFixed(2)}%)`;
-                 let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
-             };
-             let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
+             const fe = (e) => (!e || e <= 0) ? '0%' : `${e}%`;
+             let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${fe(m.ai_edge)})\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
-         }
-         let akoCandidates = [];
-         res.rows.forEach(m => {
-             if (m.ai_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
-         });
-         akoCandidates.sort((a, b) => b.edge - a.edge);
-         const uniqueAko = [];
-         const seenMatches = new Set();
-         for (const c of akoCandidates) {
-             if (!seenMatches.has(c.match)) {
-                 uniqueAko.push(c);
-                 seenMatches.add(c.match);
-             }
-         }
-         const topAko = uniqueAko.slice(0, 4);
-         if (topAko.length >= 2) {
-             let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
-             topAko.forEach((c, idx) => akoText += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${parseFloat(c.edge).toFixed(2)}%)\n`);
-             akoText += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
-             if (cr.length + akoText.length > 1900) { payloads.push(cr); cr = akoText; } else cr += akoText;
-         }
-
-         if (cr.trim().length > 0) payloads.push(cr);
-         for (const p of payloads) await message.reply(p);
-      } catch(e) {
-         console.error(e);
+        }
+        if (cr.trim().length > 0) payloads.push(cr);
+        for (const p of payloads) await message.reply(p);
+     } catch(e) {
+        console.error(e);
         return message.reply("Wystąpił błąd DB dla Esportu.");
      } finally { pgClient.release(); }
   }
@@ -341,13 +218,14 @@ async function analyzeUpcomingMatches() {
   const client = await pool.connect();
   
   try {
-    // Select matches that haven't started, are playing in the next 48h, have odds, and haven't been evaluated/sent
+    // Select matches that haven't started, are playing in the next 24h, have odds, and haven't been evaluated/sent
     const res = await client.query(`
-       SELECT * FROM matches 
-       WHERE date > NOW() 
-       AND date < NOW() + INTERVAL '48 hours'
-       AND sent_to_discord = false 
-       AND odds_home IS NOT NULL;
+      SELECT * FROM matches 
+      WHERE date > NOW() 
+      AND date < NOW() + INTERVAL '24 hours'
+      AND sent_to_discord = false 
+      AND odds_home IS NOT NULL
+      AND status IN ('NS', 'TBD');
     `);
     
     console.log(`Found ${res.rows.length} matches to analyze.`);
@@ -490,19 +368,19 @@ async function analyzeUpcomingMatches() {
           ai_dnb_edge = $12
       WHERE fixture_id = $13
     `, [
-      (() => { const ml = prediction.most_likely || {}; return h2h && h2h.edge_percent >= 3.0 ? h2h.recommended_bet : (ml.h2h || prediction.most_likely_outcome || null); })(),
-      h2h ? h2h.edge_percent : 0.0, 
-      (() => { const ml = prediction.most_likely || {}; return btts && btts.edge_percent >= 3.0 ? btts.recommended_bet : (ml.btts || null); })(),
-      btts ? btts.edge_percent : 0.0,
-      (() => { const ml = prediction.most_likely || {}; return ou && ou.edge_percent >= 3.0 ? ou.recommended_bet : (ml.ou || null); })(),
-      ou ? ou.edge_percent : 0.0,
-      (() => { const ml = prediction.most_likely || {}; return cor && cor.edge_percent >= 3.0 ? cor.recommended_bet : (ml.corners || null); })(),
-      cor ? cor.edge_percent : 0.0,
-      (() => { const ml = prediction.most_likely || {}; return dc && dc.edge_percent >= 3.0 ? dc.recommended_bet : (ml.dc || null); })(),
-      dc ? dc.edge_percent : 0.0,
-      (() => { const ml = prediction.most_likely || {}; return dnb && dnb.edge_percent >= 3.0 ? dnb.recommended_bet : (ml.dnb || null); })(),
-      dnb ? dnb.edge_percent : 0.0,
-      match.fixture_id
+      h2h ? h2h.recommended_bet : null, 
+      h2h ? h2h.edge_percent : null, 
+          btts ? btts.recommended_bet : null,
+          btts ? btts.edge_percent : null,
+          ou ? ou.recommended_bet : null,
+          ou ? ou.edge_percent : null,
+          cor ? cor.recommended_bet : null,
+          cor ? cor.edge_percent : null,
+          dc ? dc.recommended_bet : null,
+          dc ? dc.edge_percent : null,
+          dnb ? dnb.recommended_bet : null,
+          dnb ? dnb.edge_percent : null,
+          match.fixture_id
         ]);
         
       } catch (aiError) {
@@ -531,12 +409,12 @@ async function sendHourlyReport() {
     const res = await client.query(`
       SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
       FROM matches 
-      WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+      WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
       AND ai_forecast IS NOT NULL
     `);
     
     if (res.rows.length === 0) {
-      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy piłkarskich do analizy na najbliższe 48h z 18 Giga Lig Europejskich." });
+      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy piłkarskich do analizy na najbliższe 24h z 18 Giga Lig Europejskich." });
       return;
     }
     
@@ -571,15 +449,7 @@ async function sendHourlyReport() {
     });
     
     akoCandidates.sort((a, b) => b.edge - a.edge);
-    const uniqueAko = [];
-    const seenMatches = new Set();
-    for (const c of akoCandidates) {
-        if (!seenMatches.has(c.match)) {
-            uniqueAko.push(c);
-            seenMatches.add(c.match);
-        }
-    }
-    const topAko = uniqueAko.slice(0, 4);
+    const topAko = akoCandidates.slice(0, 4);
     
     if (topAko.length >= 2) {
         report += "\n\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
@@ -606,9 +476,10 @@ async function analyzeUpcomingBasketMatches() {
     const res = await client.query(`
       SELECT * FROM matches_basket 
       WHERE date > NOW() 
-      AND date < NOW() + INTERVAL '7 days'
+      AND date < NOW() + INTERVAL '48 hours'
       AND sent_to_discord = false 
-      AND odds_home IS NOT NULL;
+      AND odds_home IS NOT NULL
+      AND status IN ('NS', 'TBD');
     `);
     
     console.log(`Found ${res.rows.length} NBA matches to analyze.`);
@@ -653,40 +524,32 @@ async function analyzeUpcomingBasketMatches() {
 }
 
 async function analyzeUpcomingTennisMatches() {
-  console.log('Running analysis on upcoming Tennis matches...');
   const client = await pool.connect();
   try {
-    const res = await client.query(`SELECT * FROM matches_tennis WHERE date > NOW() AND date < NOW() + INTERVAL '7 days' AND sent_to_discord = false;`);
-    console.log(`Found ${res.rows.length} Tennis matches to analyze.`);
+    const res = await client.query(`SELECT * FROM matches_tennis WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
     for (const match of res.rows) {
       try {
         const ar = await axios.post(`${AI_SERVICE_URL}/predict_tennis`, { home_team: match.home_team, away_team: match.away_team, odds_home: typeof match.odds_home !== 'undefined' ? parseFloat(match.odds_home) : null, odds_away: typeof match.odds_away !== 'undefined' ? parseFloat(match.odds_away) : null });
         const pred = ar.data.value_bet;
         await client.query(`UPDATE matches_tennis SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2 WHERE fixture_id = $3`, [pred.recommended_bet, pred.edge_percent, match.fixture_id]);
-        console.log(`Tennis: ${match.home_team} vs ${match.away_team} -> ${pred.recommended_bet} (Edge: ${pred.edge_percent}%)`);
-      } catch (e) { console.error(`Error analyzing Tennis match ${match.fixture_id}:`, e.message); }
+      } catch (e) {}
     }
   } catch (e) {
-    console.error('Error in Tennis analyze function:', e.message);
   } finally { client.release(); }
 }
 
 async function analyzeUpcomingEsportsMatches() {
-  console.log('Running analysis on upcoming Esports matches...');
   const client = await pool.connect();
   try {
-    const res = await client.query(`SELECT * FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '7 days' AND sent_to_discord = false;`);
-    console.log(`Found ${res.rows.length} Esport matches to analyze.`);
+    const res = await client.query(`SELECT * FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
     for (const match of res.rows) {
       try {
         const ar = await axios.post(`${AI_SERVICE_URL}/predict_esport`, { home_team: match.home_team, away_team: match.away_team, odds_home: typeof match.odds_home !== 'undefined' ? parseFloat(match.odds_home) : null, odds_away: typeof match.odds_away !== 'undefined' ? parseFloat(match.odds_away) : null });
         const pred = ar.data.value_bet;
         await client.query(`UPDATE matches_esport SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2 WHERE fixture_id = $3`, [pred.recommended_bet, pred.edge_percent, match.fixture_id]);
-        console.log(`Esport: ${match.home_team} vs ${match.away_team} -> ${pred.recommended_bet} (Edge: ${pred.edge_percent}%)`);
-      } catch (e) { console.error(`Error analyzing Esport match ${match.fixture_id}:`, e.message); }
+      } catch (e) {}
     }
   } catch (e) {
-    console.error('Error in Esports analyze function:', e.message);
   } finally { client.release(); }
 }
 
