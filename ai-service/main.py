@@ -10,6 +10,7 @@ import ml_pipeline_esport
 import ml_pipeline_tennis
 import ensemble_logic
 import logging
+import difflib
 import pandas as pd
 import numpy as np
 import threading
@@ -189,13 +190,25 @@ def predict_esport(req: PredictionRequestEsport) -> Dict[str, Any]:
         }
     }
 
+def resolve_team_name(name: str, known_teams: list) -> Optional[str]:
+    """Return exact match or best fuzzy match (cutoff 0.72). Returns None if no good match."""
+    if name in known_teams:
+        return name
+    matches = difflib.get_close_matches(name, known_teams, n=1, cutoff=0.72)
+    if matches:
+        logger.info(f"Fuzzy match: '{name}' → '{matches[0]}'")
+        return matches[0]
+    return None
+
+
 @app.post("/predict")
 def predict(req: PredictionRequest) -> Dict[str, Any]:
-    home = req.home_team
-    away = req.away_team
-    
+    known = list(team_states.keys()) if team_states else []
+    home = resolve_team_name(req.home_team, known) or req.home_team
+    away = resolve_team_name(req.away_team, known) or req.away_team
+
     if home not in team_states or away not in team_states:
-        raise HTTPException(status_code=404, detail="Team history not found in database. Cannot predict.")
+        raise HTTPException(status_code=404, detail=f"Team history not found: '{req.home_team}' / '{req.away_team}'. Cannot predict.")
         
     h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = team_states[home].get_features()
     a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = team_states[away].get_features()

@@ -39,6 +39,7 @@ services:
     environment:
       - API_FOOTBALL_KEY=${API_FOOTBALL_KEY}
       - THE_ODDS_API_KEY=${THE_ODDS_API_KEY}
+      - THE_ODDS_API_KEYS=${THE_ODDS_API_KEYS:-${THE_ODDS_API_KEY}}
       - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/bettingdb
     depends_on:
       - db

@@ -8,10 +8,14 @@ const cron = require('node-cron');
 // 2. Basket, Tennis, Esport use The Odds API (optimized to exactly 5 requests per run).
 // 3. Runs every 8 hours instead of 2 hours, using precisely 450 requests/month (Fits 500 Quota).
 
-const ODDS_API_KEYS = [
-  process.env.THE_ODDS_API_KEY || 'e437116ef27159e682a544d52a8add2a' // Add multiple keys if needed
-];
-const getRandomOddsKey = () => ODDS_API_KEYS[Math.floor(Math.random() * ODDS_API_KEYS.length)];
+// Support comma-separated keys: THE_ODDS_API_KEYS=key1,key2,key3
+const _rawKeys = (process.env.THE_ODDS_API_KEYS || process.env.THE_ODDS_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
+const ODDS_API_KEYS = _rawKeys.length > 0 ? _rawKeys : ['e437116ef27159e682a544d52a8add2a'];
+let _keyIndex = 0;
+// Round-robin key rotation — automatically moves to next key on 401
+const getOddsKey = () => ODDS_API_KEYS[_keyIndex % ODDS_API_KEYS.length];
+const rotateOddsKey = () => { _keyIndex++; console.log(`Rotating to Odds API key index ${_keyIndex % ODDS_API_KEYS.length}`); };
+const getRandomOddsKey = getOddsKey; // backward compat
 
 const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
 
@@ -138,7 +142,8 @@ async function fetchUpcomingMatches() {
     tomorrow.toISOString().split('T')[0]
   ];
   
-  // GIGA EXPANDED Target Leagues (Includes all international, top 5, and more)
+  // Target Leagues — domestic + UEFA club competitions only.
+  // National team leagues (Friendlies/WC/Euro) excluded: teams not in ML training data.
   const targetLeagues = [
     39,   // Premier League
     140,  // La Liga
@@ -148,10 +153,13 @@ async function fetchUpcomingMatches() {
     106,  // Ekstraklasa
     2,    // UEFA Champions League
     3,    // UEFA Europa League
-    4,    // Euro Championship
-    15,   // FIFA World Cup
-    10,   // Friendlies
-    34    // World Cup Qualifiers
+    848,  // UEFA Conference League
+    88,   // Eredivisie
+    94,   // Primeira Liga (Portugal)
+    207,  // Swiss Super League
+    144,  // Belgian Pro League
+    71,   // Brazilian Serie A
+    253,  // MLS
   ];
   
   let premiumMatches = [];
@@ -389,7 +397,10 @@ async function fetchUpcomingBasketballMatches() {
     
   } catch (error) {
     if (error.response && error.response.status === 401) {
-       console.log('The Odds API Key exhausted entirely (401 Unauthorized for Basket).');
+       console.log('The Odds API Key exhausted (401) for Basketball. Rotating key...');
+       rotateOddsKey();
+    } else {
+       console.error('Error fetching NBA odds:', error.message);
     }
   }
 }
@@ -405,8 +416,9 @@ async function fetchUpcomingTennisMatches() {
 
   for (const tKey of tennisKeys) {
     try {
+      const currentKey = getOddsKey();
       const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${tKey}/odds/`, {
-        params: { apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
+        params: { apiKey: currentKey, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
       });
       
       if (!res.data || !Array.isArray(res.data)) continue;
@@ -446,14 +458,22 @@ async function fetchUpcomingEsportsMatches() {
   if (!ODDS_API_KEY) return;
   console.log('Discovering active Esport tournaments from The Odds API...');
   
-  const esportsKeys = ['esports_csgo_match_winner', 'esports_league_of_legends']; // Exactly 2 requests
+  // CS:GO was rebranded to CS2 in Sept 2023 — try both keys for compatibility
+  const esportsKeys = [
+    'esports_cs2_match_winner',
+    'esports_csgo_match_winner',
+    'esports_lol_match_winner',
+    'esports_league_of_legends',
+    'esports_dota2_match_winner',
+    'esports_valorant_match_winner',
+  ];
   const client = await pool.connect();
   let totalSaved = 0;
 
   for (const sportKey of esportsKeys) {
     try {
       const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/`, {
-        params: { apiKey: ODDS_API_KEY, regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
+        params: { apiKey: getOddsKey(), regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
       });
       
       if (!res.data || !Array.isArray(res.data)) continue;
@@ -481,7 +501,17 @@ async function fetchUpcomingEsportsMatches() {
           totalSaved++;
         } catch (e) { }
       }
-    } catch (e) {}
+    } catch (e) {
+      if (e.response && e.response.status === 401) {
+        console.log(`Odds API key exhausted (401) for ${sportKey}. Rotating...`);
+        rotateOddsKey();
+        break; // stop trying more sport keys with exhausted key
+      } else if (e.response && e.response.status === 404) {
+        // Sport key doesn't exist — silently skip
+      } else {
+        console.error(`Esport fetch error for ${sportKey}:`, e.message);
+      }
+    }
   }
   
   if (totalSaved > 0) console.log(`Saved ${totalSaved} Esport matches.`);
