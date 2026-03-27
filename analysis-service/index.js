@@ -99,7 +99,7 @@ discordClient.on('messageCreate', async (message) => {
           if (edge <= 0) return `${edge}%`;
           return `**+${edge}%** ✅`;
         };
-        const formatOdds = (o) => o ? o.toFixed(2) : '-';
+        const formatOdds = (o) => o ? parseFloat(o).toFixed(2) : '-';
 
         let currentReport = `⚽ **RAPORT PIŁKARSKI [XGBoost Ensemble AI]** ⚽\n📅 Najbliższe ${res.rows.length} mecz(y) — okno 72h\n\n`;
         const payloads = [];
