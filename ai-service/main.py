@@ -78,24 +78,29 @@ def load_ai():
         ml_pipeline.train_model()
         
     if not os.path.exists(ml_pipeline_basket.BASKET_STATE_FILE):
-        logger.warning("Basket State not found. Training Basketball ML pipeline...")
-        ml_pipeline_basket.train_basket_model()
-        
+        logger.warning("Basket State not found. Skipping Basketball (non-critical).")
+    
     if not os.path.exists(ml_pipeline_esport.ESPORT_MODEL_FILE):
-        logger.warning("Esport Model not found. Synthesizing Esport ML pipeline...")
-        ml_pipeline_esport.train_esport_model()
+        logger.warning("Esport Model not found. Skipping Esport (non-critical).")
         
     if not os.path.exists(ml_pipeline_tennis.TENNIS_MODEL_FILE):
-        logger.warning("Tennis Model not found. Synthesizing Tennis ML pipeline...")
-        ml_pipeline_tennis.train_tennis_model()
+        logger.warning("Tennis Model not found. Skipping Tennis (non-critical).")
     
-    model = joblib.load(MODEL_PATH)
-    model_btts = joblib.load('model_btts.joblib')
-    model_ou = joblib.load('model_ou.joblib')
-    model_corners = joblib.load('model_corners.joblib')
-    team_states = joblib.load(STATE_PATH)
-    team_states_basket = joblib.load(ml_pipeline_basket.BASKET_STATE_FILE)
-    logger.info("Models and team states (Football & Basket) loaded successfully.")
+    try:
+        model = joblib.load(MODEL_PATH)
+        model_btts = joblib.load('model_btts.joblib')
+        model_ou = joblib.load('model_ou.joblib')
+        model_corners = joblib.load('model_corners.joblib')
+        team_states = joblib.load(STATE_PATH)
+    except Exception as e:
+        logger.error(f"Cannot load Football Model. Err: {e}")
+
+    try:
+        team_states_basket = joblib.load(ml_pipeline_basket.BASKET_STATE_FILE)
+    except Exception as e:
+        logger.warning(f"Cannot load Basket states: {e}")
+        team_states_basket = {}
+    logger.info("Models and team states loaded (Football primary).")
 
 def scheduled_retrain():
     logger.info("Starting Auto-Retraining Pipeline (APScheduler) - Fetching latest results...")
