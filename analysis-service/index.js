@@ -53,13 +53,9 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
+                 if (isNaN(e) || e <= 0.0) return "❌ Pomiń (Brak edge)";
                  let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
-                 if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
-                 
-                 if (o <= 1.40 && e > -6.0 && e < 3.0) return `🛡️ PEWNIAK DO AKO (Kurs: ${o.toFixed(2)}, Edge: ${e.toFixed(2)}%)`;
-                 
-                 if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
+                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e.toFixed(2)}%)`;
                  let k = ((e / 100) / (o - 1)) * 100;
                  return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
              };
@@ -93,12 +89,12 @@ discordClient.on('messageCreate', async (message) => {
         
         let akoCandidates = [];
         res.rows.forEach(m => {
-            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
-            if (m.ai_btts_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
-            if (m.ai_ou_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
-            if (m.ai_corners_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
-            if (m.ai_dc_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
-            if (m.ai_dnb_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dnb_forecast, edge: m.ai_dnb_edge });
+            if (m.ai_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+            if (m.ai_btts_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
+            if (m.ai_ou_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
+            if (m.ai_corners_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
+            if (m.ai_dc_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
+            if (m.ai_dnb_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dnb_forecast, edge: m.ai_dnb_edge });
         });
         
         akoCandidates.sort((a, b) => b.edge - a.edge);
@@ -160,13 +156,9 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
+                 if (isNaN(e) || e <= 0.0) return "❌ Pomiń (Brak edge)";
                  let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
-                 if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
-                 
-                 if (o <= 1.40 && e > -6.0 && e < 3.0) return `🛡️ PEWNIAK DO AKO (Kurs: ${o.toFixed(2)}, Edge: ${e.toFixed(2)}%)`;
-                 
-                 if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
+                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e.toFixed(2)}%)`;
                  let k = ((e / 100) / (o - 1)) * 100;
                  return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
              };
@@ -189,7 +181,7 @@ discordClient.on('messageCreate', async (message) => {
         
         let akoCandidates = [];
         res.rows.forEach(m => {
-            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+            if (m.ai_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
         });
         akoCandidates.sort((a, b) => b.edge - a.edge);
         const uniqueAko = [];
@@ -246,13 +238,9 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
+                 if (isNaN(e) || e <= 0.0) return "❌ Pomiń (Brak edge)";
                  let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
-                 if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
-                 
-                 if (o <= 1.40 && e > -6.0 && e < 3.0) return `🛡️ PEWNIAK DO AKO (Kurs: ${o.toFixed(2)}, Edge: ${e.toFixed(2)}%)`;
-                 
-                 if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
+                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e.toFixed(2)}%)`;
                  let k = ((e / 100) / (o - 1)) * 100;
                  return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
              };
@@ -262,7 +250,7 @@ discordClient.on('messageCreate', async (message) => {
         }
         let akoCandidates = [];
         res.rows.forEach(m => {
-            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+            if (m.ai_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
         });
         akoCandidates.sort((a, b) => b.edge - a.edge);
         const uniqueAko = [];
@@ -303,13 +291,9 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
+                 if (isNaN(e) || e <= 0.0) return "❌ Pomiń (Brak edge)";
                  let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
-                 if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
-                 
-                 if (o <= 1.40 && e > -6.0 && e < 3.0) return `🛡️ PEWNIAK DO AKO (Kurs: ${o.toFixed(2)}, Edge: ${e.toFixed(2)}%)`;
-                 
-                 if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
+                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e.toFixed(2)}%)`;
                  let k = ((e / 100) / (o - 1)) * 100;
                  return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
              };
@@ -319,7 +303,7 @@ discordClient.on('messageCreate', async (message) => {
          }
          let akoCandidates = [];
          res.rows.forEach(m => {
-             if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+             if (m.ai_edge > 0.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
          });
          akoCandidates.sort((a, b) => b.edge - a.edge);
          const uniqueAko = [];

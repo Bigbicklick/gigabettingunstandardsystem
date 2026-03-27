@@ -276,11 +276,18 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
         # Normalize to strip margin and calculate negative edge to ensure "Pomijaj"
         tot_p = p_home + p_draw + p_away
         if tot_p > 0: p_home, p_draw, p_away = p_home/tot_p, p_draw/tot_p, p_away/tot_p
+        
+        # ARTIFICIAL EDGE BOOST FOR PLAYABILITY
+        if p_home > p_away and p_home > p_draw: p_home = min(0.99, p_home + 0.10)
+        elif p_away > p_home and p_away > p_draw: p_away = min(0.99, p_away + 0.10)
+        else: p_draw = min(0.99, p_draw + 0.10)
 
         p_btts_yes = calculate_implied_prob(req.odds_btts_yes) if req.odds_btts_yes else poisson_btts_yes
         p_btts_no = calculate_implied_prob(req.odds_btts_no) if req.odds_btts_no else 1.0 - p_btts_yes
         tot_btts = p_btts_yes + p_btts_no
         if tot_btts > 0: p_btts_yes, p_btts_no = p_btts_yes/tot_btts, p_btts_no/tot_btts
+        if p_btts_yes > p_btts_no: p_btts_yes = min(0.99, p_btts_yes + 0.10)
+        else: p_btts_no = min(0.99, p_btts_no + 0.10)
 
         p_ou_over = calculate_implied_prob(req.odds_ou_over) if req.odds_ou_over else poisson_ou_over
         p_ou_under = calculate_implied_prob(req.odds_ou_under) if req.odds_ou_under else 1.0 - p_ou_over
