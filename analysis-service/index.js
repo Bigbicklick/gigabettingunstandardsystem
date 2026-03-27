@@ -475,20 +475,34 @@ discordClient.on('messageCreate', async (message) => {
 
           if (m.ai_forecast) {
             const edge = parseFloat(m.ai_edge) || 0;
+            // Map "Home Win"/"Away Win" to actual team names
+            let winner = m.ai_forecast;
+            if (m.ai_forecast === 'Home Win') winner = m.home_team;
+            else if (m.ai_forecast === 'Away Win') winner = m.away_team;
+
             let winPct = null;
             if (m.ai_probability !== null && m.ai_probability !== undefined) {
-              winPct = Math.round(parseFloat(m.ai_probability));
+              const p = Math.round(parseFloat(m.ai_probability));
+              if (p !== 50) winPct = p; // 50/50 means no data — suppress
             } else if (probs) {
-              winPct = m.ai_forecast === m.home_team ? probs[0] : probs[1];
+              winPct = winner === m.home_team ? probs[0] : probs[1];
             }
-            const srcLabel = (m.ai_probability && parseFloat(m.ai_probability) > 0) ? '🧠 ML AI' : '📊 Kursowe AI';
+            const hasOdds = m.odds_home && m.odds_away;
+            const srcLabel = hasOdds ? '🧠 ML AI' : '📊 Forma AI';
             const winStr = winPct !== null ? ` — **${winPct}% szans**` : '';
-            chunk += `> ${srcLabel}: **${m.ai_forecast}** wygra${winStr}\n`;
-            if (edge >= 5.0)      chunk += `> 💎 **GRAMY: ${m.ai_forecast} (Edge: +${edge}%)** 🔥\n`;
-            else if (edge >= 3.0) chunk += `> 💎 Value: **+${edge}%** ✅ — warto rozważyć\n`;
-            else if (edge >= 0)   chunk += `> 💎 Edge: +${edge}% 🟡 — neutralny\n`;
-            else                  chunk += `> 💎 Brak value betu (edge: ${edge}%) — kurs rynkowy\n`;
-            if (edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+            chunk += `> ${srcLabel}: **${winner}** wygra${winStr}\n`;
+            if (edge <= -100 || (!hasOdds && edge < 0)) {
+              chunk += `> 💎 Brak kursów — predykcja z formy drużyny\n`;
+            } else if (edge >= 5.0) {
+              chunk += `> 💎 **GRAMY: ${winner} (Edge: +${edge}%)** 🔥\n`;
+            } else if (edge >= 3.0) {
+              chunk += `> 💎 Value: **+${edge}%** ✅ — warto rozważyć\n`;
+            } else if (edge >= 0) {
+              chunk += `> 💎 Edge: +${edge}% 🟡 — neutralny\n`;
+            } else {
+              chunk += `> 💎 Brak value betu (edge: ${edge}%) — kurs rynkowy\n`;
+            }
+            if (edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: winner, edge: m.ai_edge });
           } else {
             chunk += `> 🤖 AI: oczekiwanie na analizę...\n`;
           }
