@@ -2,69 +2,63 @@ import os
 import difflib
 import psycopg2
 
-# --- ESPORT PREDICTION: DB-backed win-rate engine (Phase 12) ---
-# Team stats sourced from PandaScore historical + OpenDota, stored in team_stats_esport table.
-# Falls back to 50.0 if team is unknown.
+# --- ESPORT PREDICTION: In-memory win-rate engine (Phase 12) ---
+# Team stats loaded from team_stats_esport table ONCE at startup.
+# Zero DB calls during prediction — instant dictionary lookup.
 
 ESPORT_MODEL_FILE = 'esport_model.pkl'  # Kept for backwards compat
 
 DB_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@db:5432/bettingdb')
 
-_team_cache = {}   # in-memory cache to avoid repeated DB lookups per process lifetime
-_all_names = None  # cached list of all team names for fuzzy matching
+# { "team_name_lower": (win_rate, matches_played, original_name) }
+_stats: dict = {}
 
-def _load_all_names(cur):
-    global _all_names
-    if _all_names is None:
-        cur.execute("SELECT team_name FROM team_stats_esport")
-        _all_names = [row[0] for row in cur.fetchall()]
-    return _all_names
 
-def get_team_form_esport(team_name):
-    """
-    Returns win-rate 0-100 from team_stats_esport table.
-    Uses fuzzy name matching when exact match not found.
-    50.0 = neutral fallback for unknown teams.
-    """
-    if team_name in _team_cache:
-        return _team_cache[team_name]
+def load_team_stats():
+    """Load all team stats from DB into memory. Called at startup and periodically."""
+    global _stats
     try:
         conn = psycopg2.connect(DB_URL, connect_timeout=5)
         cur = conn.cursor()
-
-        # 1) Exact match (case-insensitive)
-        cur.execute(
-            "SELECT win_rate, matches_played FROM team_stats_esport WHERE LOWER(team_name) = LOWER(%s)",
-            (team_name,)
-        )
-        row = cur.fetchone()
-
-        if not row:
-            # 2) Fuzzy match
-            names = _load_all_names(cur)
-            close = difflib.get_close_matches(team_name, names, n=1, cutoff=0.6)
-            if close:
-                cur.execute(
-                    "SELECT win_rate, matches_played FROM team_stats_esport WHERE team_name = %s",
-                    (close[0],)
-                )
-                row = cur.fetchone()
-
+        cur.execute("SELECT team_name, win_rate, matches_played FROM team_stats_esport")
+        rows = cur.fetchall()
         conn.close()
-
-        if row and row[1] >= 3:  # need at least 3 matches to trust the data
-            result = float(row[0])
-            _team_cache[team_name] = result
-            return result
+        _stats = {row[0].lower(): (float(row[1]), int(row[2]), row[0]) for row in rows}
+        print(f"Esport team stats loaded: {len(_stats)} teams.")
     except Exception as e:
-        print(f"Esport DB lookup error for '{team_name}': {e}")
+        print(f"Esport stats load error: {e}. Using empty cache.")
+        _stats = {}
+
+
+def get_team_form_esport(team_name: str) -> float:
+    """
+    Returns win-rate 0-100 from in-memory cache.
+    Uses fuzzy name matching when exact match not found.
+    50.0 = neutral fallback for unknown teams.
+    """
+    if not _stats:
+        return 50.0
+
+    key = team_name.lower()
+
+    # 1) Exact match
+    if key in _stats:
+        win_rate, played, _ = _stats[key]
+        return win_rate if played >= 3 else 50.0
+
+    # 2) Fuzzy match
+    all_keys = list(_stats.keys())
+    close = difflib.get_close_matches(key, all_keys, n=1, cutoff=0.6)
+    if close:
+        win_rate, played, _ = _stats[close[0]]
+        return win_rate if played >= 3 else 50.0
 
     return 50.0
 
 
 def train_esport_model():
-    """No-op: Phase 12 uses DB-backed win-rate engine."""
-    print("ESPORT Phase 12: DB win-rate engine active.")
+    """No-op: Phase 12 uses in-memory win-rate engine."""
+    print("ESPORT Phase 12: in-memory win-rate engine active.")
 
 
 def predict_esport_match(home_team, away_team, odds_home=None, odds_away=None):

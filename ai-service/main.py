@@ -136,8 +136,11 @@ def scheduled_retrain():
 @app.on_event("startup")
 async def startup_event():
     load_ai()
+    ml_pipeline_esport.load_team_stats()
     # Schedule autonomous learning every Monday at 04:00 AM Europe Time
     scheduler.add_job(scheduled_retrain, 'cron', day_of_week='mon', hour=4, minute=0)
+    # Refresh esport team stats every 8 hours
+    scheduler.add_job(ml_pipeline_esport.load_team_stats, 'interval', hours=8)
     scheduler.start()
 
 def calculate_implied_prob(odds: float) -> float:
