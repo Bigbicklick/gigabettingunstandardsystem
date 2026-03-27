@@ -205,8 +205,10 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     home = find_best_team_match(home_raw, team_states)
     away = find_best_team_match(away_raw, team_states)
     
+    is_unknown_team = False
     # Feature collection
     if not home or not away or home not in team_states or away not in team_states:
+        is_unknown_team = True
         h_pts, h_gs, h_gc, h_sh, h_sh_c, h_sot, h_sot_c, h_streak, h_games = 1.5, 13.0, 13.0, 100.0, 100.0, 40.0, 40.0, 0, 10
         a_pts, a_gs, a_gc, a_sh, a_sh_c, a_sot, a_sot_c, a_streak, a_games = 1.5, 13.0, 13.0, 100.0, 100.0, 40.0, 40.0, 0, 10
         h_elo, a_elo = 1500.0, 1500.0
@@ -267,16 +269,28 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     poisson_btts_no = 1.0 - poisson_btts_yes
     poisson_ou_under = 1.0 - poisson_ou_over
     
-    if model is None:
+    if model is None or is_unknown_team:
         p_home = calculate_implied_prob(req.odds_home) if req.odds_home else 0.33
         p_draw = calculate_implied_prob(req.odds_draw) if req.odds_draw else 0.33
         p_away = calculate_implied_prob(req.odds_away) if req.odds_away else 0.33
+        # Normalize to strip margin and calculate negative edge to ensure "Pomijaj"
+        tot_p = p_home + p_draw + p_away
+        if tot_p > 0: p_home, p_draw, p_away = p_home/tot_p, p_draw/tot_p, p_away/tot_p
+
         p_btts_yes = calculate_implied_prob(req.odds_btts_yes) if req.odds_btts_yes else poisson_btts_yes
-        p_btts_no = 1.0 - p_btts_yes
+        p_btts_no = calculate_implied_prob(req.odds_btts_no) if req.odds_btts_no else 1.0 - p_btts_yes
+        tot_btts = p_btts_yes + p_btts_no
+        if tot_btts > 0: p_btts_yes, p_btts_no = p_btts_yes/tot_btts, p_btts_no/tot_btts
+
         p_ou_over = calculate_implied_prob(req.odds_ou_over) if req.odds_ou_over else poisson_ou_over
-        p_ou_under = 1.0 - p_ou_over
+        p_ou_under = calculate_implied_prob(req.odds_ou_under) if req.odds_ou_under else 1.0 - p_ou_over
+        tot_ou = p_ou_over + p_ou_under
+        if tot_ou > 0: p_ou_over, p_ou_under = p_ou_over/tot_ou, p_ou_under/tot_ou
+
         p_cor_over = calculate_implied_prob(req.odds_corners_over) if req.odds_corners_over else 0.5
-        p_cor_under = 1.0 - p_cor_over
+        p_cor_under = calculate_implied_prob(req.odds_corners_under) if req.odds_corners_under else 1.0 - p_cor_over
+        tot_cor = p_cor_over + p_cor_under
+        if tot_cor > 0: p_cor_over, p_cor_under = p_cor_over/tot_cor, p_cor_under/tot_cor
     else:
         X = np.array([feature_row])
         probs = model.predict_proba(X)[0]
