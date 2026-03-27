@@ -53,11 +53,12 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
-                 if (!e || isNaN(e) || e < 3.0) return "❌ Pomiń (Brak edge)";
                  let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return "❌ Pomiń (Brak kursu)";
+                 if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
+                 if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
+                 if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
                  let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ GRAMY (Edge: ${e}%, Stawka: ${k.toFixed(1)}%)`;
+                 return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
              };
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
@@ -156,12 +157,12 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
-                 if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
-                 if (e < 3.0) return `❌ Pomiń (Słabe Edge: ${e.toFixed(2)}%)`;
                  let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: Oblicz na podstawie bukmachera)`;
+                 if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
+                 if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
+                 if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
                  let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ GRAMY (Edge: ${e}%, Stawka: ${k.toFixed(1)}%)`;
+                 return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
              };
 
              let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
@@ -239,12 +240,12 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
-                 if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
-                 if (e < 3.0) return `❌ Pomiń (Słabe Edge: ${e.toFixed(2)}%)`;
                  let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: ?)`;
+                 if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
+                 if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
+                 if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
                  let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ GRAMY (Edge: ${e}%, Stawka: ${k.toFixed(1)}%)`;
+                 return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
              };
              let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
              let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
@@ -293,12 +294,12 @@ discordClient.on('messageCreate', async (message) => {
         for (const m of res.rows) {
              const makeDecision = (edge, odds) => {
                  let e = parseFloat(edge);
-                 if (!e || isNaN(e) || e <= -5000) return "❌ Pomiń (Brak edge/danych)";
-                 if (e < 3.0) return `❌ Pomiń (Słabe Edge: ${e.toFixed(2)}%)`;
                  let o = parseFloat(odds);
-                 if (!o || o <= 1.0) return `✅ GRAMY (Edge: ${e}%, Stawka: ?)`;
+                 if (!o || o <= 1.0) return `❌ Pomiń (Brak kursu${!isNaN(e) ? ', Edge: '+e.toFixed(2)+'%' : ''})`;
+                 if (isNaN(e) || e <= -5000) return `❌ Pomiń (Brak danych, Kurs: ${o.toFixed(2)})`;
+                 if (e < 3.0) return `❌ Pomiń (Edge: ${e.toFixed(2)}%, Kurs: ${o.toFixed(2)})`;
                  let k = ((e / 100) / (o - 1)) * 100;
-                 return `✅ GRAMY (Edge: ${e}%, Stawka: ${k.toFixed(1)}%)`;
+                 return `✅ GRAMY (Edge: ${e.toFixed(2)}%, Stawka: ${k.toFixed(1)}%)`;
              };
              let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
              let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
