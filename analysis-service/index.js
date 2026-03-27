@@ -865,6 +865,25 @@ async function analyzeUpcomingTennisMatches() {
   } finally { client.release(); }
 }
 
+async function getEsportTeamWinRate(client, teamName) {
+  // Exact match (case-insensitive)
+  let r = await client.query(
+    `SELECT win_rate, matches_played FROM team_stats_esport WHERE LOWER(team_name) = LOWER($1)`,
+    [teamName]
+  );
+  if (r.rows.length > 0 && r.rows[0].matches_played >= 3) return parseFloat(r.rows[0].win_rate);
+
+  // Fuzzy: pick closest by trigram similarity using pg_trgm if available, or just return 50
+  // Simplified: scan all and find best levenshtein-like match via LIKE prefix
+  r = await client.query(
+    `SELECT team_name, win_rate, matches_played FROM team_stats_esport WHERE LOWER(team_name) LIKE $1 AND matches_played >= 3 LIMIT 1`,
+    [`${teamName.toLowerCase().slice(0, 5)}%`]
+  );
+  if (r.rows.length > 0) return parseFloat(r.rows[0].win_rate);
+
+  return 50.0;
+}
+
 async function analyzeUpcomingEsportsMatches() {
   const client = await pool.connect();
   try {
@@ -872,19 +891,42 @@ async function analyzeUpcomingEsportsMatches() {
     if (res.rows.length > 0) console.log(`Found ${res.rows.length} Esport matches to analyze.`);
     for (const match of res.rows) {
       try {
-        const ar = await axios.post(`${AI_SERVICE_URL}/predict_esport`, {
-          home_team: match.home_team,
-          away_team: match.away_team,
-          odds_home: match.odds_home ? parseFloat(match.odds_home) : null,
-          odds_away: match.odds_away ? parseFloat(match.odds_away) : null
-        }, { timeout: 8000 });
-        const pred = ar.data.value_bet;
-        await client.query(`UPDATE matches_esport SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2, ai_probability = $3 WHERE fixture_id = $4`,
-          [pred.recommended_bet, pred.edge_percent, pred.model_probability, match.fixture_id]);
+        const hForm = await getEsportTeamWinRate(client, match.home_team);
+        const aForm = await getEsportTeamWinRate(client, match.away_team);
+
+        const oH = match.odds_home ? parseFloat(match.odds_home) : null;
+        const oA = match.odds_away ? parseFloat(match.odds_away) : null;
+
+        let forecast, prob, edge;
+        if (oH && oA && oH > 1 && oA > 1) {
+          const fH = (1 / oH) / (1 / oH + 1 / oA);
+          const fA = 1 - fH;
+          const adj = ((hForm - aForm) / 100) * 0.15;
+          const mH = Math.max(0.05, Math.min(0.95, fH + adj));
+          const mA = 1 - mH;
+          if (mH >= mA) {
+            forecast = 'Home Win'; prob = Math.round(mH * 100); edge = parseFloat(((mH - fH) * 100).toFixed(2));
+          } else {
+            forecast = 'Away Win'; prob = Math.round(mA * 100); edge = parseFloat(((mA - fA) * 100).toFixed(2));
+          }
+        } else {
+          const total = hForm + aForm || 100;
+          if (hForm >= aForm) {
+            forecast = 'Home Win'; prob = Math.round((hForm / total) * 100); edge = -5.0;
+          } else {
+            forecast = 'Away Win'; prob = Math.round((aForm / total) * 100); edge = -5.0;
+          }
+        }
+
+        await client.query(
+          `UPDATE matches_esport SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2, ai_probability = $3 WHERE fixture_id = $4`,
+          [forecast, edge, prob, match.fixture_id]
+        );
       } catch (e) {
-        console.error(`Esport predict error for ${match.home_team} vs ${match.away_team}: ${e.message}`);
+        console.error(`Esport analyze error for ${match.home_team} vs ${match.away_team}: ${e.message}`);
       }
     }
+    if (res.rows.length > 0) console.log(`Esport: analyzed ${res.rows.length} matches.`);
   } catch (e) {
     console.error('Error in analyzeUpcomingEsportsMatches:', e.message);
   } finally { client.release(); }
