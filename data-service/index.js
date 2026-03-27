@@ -116,9 +116,12 @@ async function initDB() {
         odds_totals_under DECIMAL,
         ai_forecast VARCHAR(50) DEFAULT NULL,
         ai_edge DECIMAL DEFAULT NULL,
+        ai_probability DECIMAL DEFAULT NULL,
         sent_to_discord BOOLEAN DEFAULT false
       );
     `);
+
+    await client.query(`ALTER TABLE matches_basket ADD COLUMN IF NOT EXISTS ai_probability DECIMAL DEFAULT NULL;`);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS matches_tennis (

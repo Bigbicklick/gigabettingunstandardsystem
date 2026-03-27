@@ -234,42 +234,117 @@ discordClient.on('messageCreate', async (message) => {
      const pgClient = await pool.connect();
      try {
         const res = await pgClient.query(`
-          SELECT home_team, away_team, odds_home, odds_away, odds_spread_home, odds_spread_away, odds_totals_over, ai_forecast, ai_edge
-          FROM matches_basket 
-          WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours'
+          SELECT home_team, away_team, date, league_name,
+                 odds_home, odds_away,
+                 odds_spread_home, odds_spread_away,
+                 odds_totals_over, odds_totals_under,
+                 ai_forecast, ai_edge, ai_probability
+          FROM matches_basket
+          WHERE date > NOW() AND date < NOW() + INTERVAL '72 hours'
+          ORDER BY date ASC
         `);
-        
+
         if (res.rows.length === 0) {
-          return message.reply("ℹ️ Mój wirtualny mózg sprawdził bazę. Obecnie nie ma pobranych meczów NBA na najbliższe 48h.");
+          return message.reply(
+            "ℹ️ **Brak nadchodzących meczów NBA/koszykówki na najbliższe 72h.**\n" +
+            "Sprawdź jutro — mecze NBA grają niemal codziennie."
+          );
         }
-        
-        let currentReport = "🏀 **KURSOWY RAPORT NBA [Multi-Regional API: Phase 10]** 🏀🔥\nThe Giga Brain: Live XGBoost Engine\n\n";
+
+        const fmtOdds = (o) => o ? parseFloat(o).toFixed(2) : '-';
+        const fairProb2 = (...odds) => {
+          const parsed = odds.map(o => o ? 1 / parseFloat(o) : 0);
+          const total = parsed.reduce((s, p) => s + p, 0);
+          if (total <= 0) return null;
+          return parsed.map(p => Math.round(p / total * 100));
+        };
+        const fmtEdge = (edge) => {
+          if (edge === null || edge === undefined) return '—';
+          if (edge >= 5.0) return `**+${edge}%** 🔥 GRAMY`;
+          if (edge >= 3.0) return `**+${edge}%** ✅`;
+          if (edge >= 0)   return `+${edge}% 🟡`;
+          return `${edge}% ❌`;
+        };
+
+        let currentReport = `🏀 **RAPORT KOSZYKÓWKA [XGBoost AI]** 🏀\n📅 Najbliższe ${res.rows.length} mecz(y) — okno 72h\n\n`;
         const payloads = [];
-        
+        const akoCandidates = [];
+
         for (const m of res.rows) {
-             const formatEdge = (edge) => (!edge || edge <= 0) ? '0%' : `${edge}%`;
+          const dt = new Date(m.date);
+          const dateStr = dt.toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: '2-digit' });
+          const timeStr = dt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 
-             let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
-             chunk += `> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n`;
-             if (m.odds_spread_home) chunk += `> Spread Home: ${m.odds_spread_home}\n`;
-             if (m.odds_totals_over) chunk += `> Totals Over: ${m.odds_totals_over}\n`;
-             chunk += `> AI Prediction: ${m.ai_forecast || 'Pending...'} (Edge: ${formatEdge(m.ai_edge)})\n\n`;
-             
-             if (currentReport.length + chunk.length > 1900) {
-                 payloads.push(currentReport);
-                 currentReport = chunk;
-             } else {
-                 currentReport += chunk;
-             }
-        }
-        
-        if (currentReport.trim().length > 0) {
-             payloads.push(currentReport);
+          let chunk = `**${m.home_team} vs ${m.away_team}**\n`;
+          chunk += `> 📅 ${dateStr} ${timeStr}`;
+          if (m.league_name) chunk += ` | 🏆 ${m.league_name}`;
+          chunk += '\n';
+
+          chunk += `> 💰 Kursy: ${fmtOdds(m.odds_home)} / ${fmtOdds(m.odds_away)}\n`;
+          if (m.odds_spread_home && m.odds_spread_away)
+            chunk += `> 📊 Spread: ${fmtOdds(m.odds_spread_home)} / ${fmtOdds(m.odds_spread_away)}\n`;
+          if (m.odds_totals_over && m.odds_totals_under)
+            chunk += `> 🥅 Totals: Over ${fmtOdds(m.odds_totals_over)} / Under ${fmtOdds(m.odds_totals_under)}\n`;
+
+          if (m.ai_forecast) {
+            const edge = parseFloat(m.ai_edge) || 0;
+            // Win probability: prefer stored ML probability, fall back to odds-based
+            let winPct = null;
+            if (m.ai_probability !== null && m.ai_probability !== undefined) {
+              winPct = Math.round(parseFloat(m.ai_probability));
+            } else {
+              const h2hP = fairProb2(m.odds_home, m.odds_away);
+              if (h2hP) winPct = m.ai_forecast === m.home_team ? h2hP[0] : h2hP[1];
+            }
+            const sourceLabel = (m.ai_probability && parseFloat(m.ai_probability) > 0) ? '🧠 ML AI' : '📊 Kursowe AI';
+            const winStr = winPct !== null ? ` — **${winPct}% szans**` : '';
+            chunk += `> ${sourceLabel}: **${m.ai_forecast}** najprawdopodobniej wygra${winStr}\n`;
+
+            // Totals O/U with %
+            if (m.odds_totals_over && m.odds_totals_under) {
+              const totP = fairProb2(m.odds_totals_over, m.odds_totals_under);
+              if (totP) chunk += `> 🏹 Totals O/U: Over ${totP[0]}% szans / Under ${totP[1]}% szans\n`;
+            }
+
+            // Value line
+            if (edge >= 5.0) {
+              chunk += `> 💎 **GRAMY: ${m.ai_forecast} (Edge: +${edge}%)** 🔥\n`;
+            } else if (edge >= 3.0) {
+              chunk += `> 💎 Value: **+${edge}%** ✅ — warto rozważyć\n`;
+            } else if (edge >= 0) {
+              chunk += `> 💎 Edge: +${edge}% 🟡 — neutralny\n`;
+            } else {
+              chunk += `> 💎 Brak value betu (edge: ${edge}%) — kurs rynkowy\n`;
+            }
+
+            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+          } else {
+            chunk += `> 🤖 AI: oczekiwanie na analizę...\n`;
+          }
+          chunk += '\n';
+
+          if (currentReport.length + chunk.length > 1900) {
+            payloads.push(currentReport);
+            currentReport = chunk;
+          } else {
+            currentReport += chunk;
+          }
         }
 
-        for (const payload of payloads) {
-             await message.reply(payload);
+        // AKO coupon
+        akoCandidates.sort((a, b) => b.edge - a.edge);
+        const topAko = [...new Map(akoCandidates.map(c => [c.match, c])).values()].slice(0, 4);
+        if (topAko.length >= 2) {
+          let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
+          topAko.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (Edge: +${c.edge}%)\n`; });
+          akoText += "💸 Postaw jako AKO dla większego zysku!\n";
+          if (currentReport.length + akoText.length > 1900) { payloads.push(currentReport); currentReport = akoText; }
+          else currentReport += akoText;
         }
+
+        if (currentReport.trim().length > 0) payloads.push(currentReport);
+        for (const payload of payloads) await message.reply(payload);
+
      } catch(e) {
         console.error(e);
         return message.reply("Wystąpił błąd podczas pobierania meczów NBA (Database I/O).");
@@ -628,11 +703,13 @@ async function analyzeUpcomingBasketMatches() {
           UPDATE matches_basket 
           SET sent_to_discord = true, 
               ai_forecast = $1, 
-              ai_edge = $2
-          WHERE fixture_id = $3
+              ai_edge = $2,
+              ai_probability = $3
+          WHERE fixture_id = $4
         `, [
-          prediction.recommended_bet, 
-          prediction.edge_percent, 
+          prediction.recommended_bet,
+          prediction.edge_percent,
+          prediction.model_probability,
           match.fixture_id
         ]);
         
