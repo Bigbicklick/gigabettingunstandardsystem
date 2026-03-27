@@ -9,3 +9,4 @@ pydantic==2.6.4
 requests==2.31.0
 tzlocal==5.3.1
 apscheduler==3.10.4
+psycopg2-binary==2.9.9

@@ -1,82 +1,70 @@
 import os
-import requests
+import difflib
+import psycopg2
 
-# --- THE GIGA BRAIN: ODDS-ANCHORED ESPORT PREDICTION (Phase 11) ---
-# Esports matches from TheSportsDB have NO ODDS — use form-based prediction only
-# When odds are available (future expansion), anchor to them like tennis.
-
-API_KEY = "3"
-BASE_SEARCH_URL = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/searchteams.php"
-BASE_EVENTS_URL = f"https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventslast.php"
+# --- ESPORT PREDICTION: DB-backed win-rate engine (Phase 12) ---
+# Team stats sourced from PandaScore historical + OpenDota, stored in team_stats_esport table.
+# Falls back to 50.0 if team is unknown.
 
 ESPORT_MODEL_FILE = 'esport_model.pkl'  # Kept for backwards compat
 
+DB_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@db:5432/bettingdb')
+
+_team_cache = {}   # in-memory cache to avoid repeated DB lookups per process lifetime
+_all_names = None  # cached list of all team names for fuzzy matching
+
+def _load_all_names(cur):
+    global _all_names
+    if _all_names is None:
+        cur.execute("SELECT team_name FROM team_stats_esport")
+        _all_names = [row[0] for row in cur.fetchall()]
+    return _all_names
+
 def get_team_form_esport(team_name):
     """
-    Returns a form score 0-100 from TheSportsDB last results.
-    50 = neutral (unknown team), higher = better form.
+    Returns win-rate 0-100 from team_stats_esport table.
+    Uses fuzzy name matching when exact match not found.
+    50.0 = neutral fallback for unknown teams.
     """
+    if team_name in _team_cache:
+        return _team_cache[team_name]
     try:
-        r_search = requests.get(BASE_SEARCH_URL, params={"t": team_name}, timeout=5)
-        if r_search.status_code != 200:
-            return 50.0
+        conn = psycopg2.connect(DB_URL, connect_timeout=5)
+        cur = conn.cursor()
 
-        data = r_search.json()
-        teams = data.get("teams")
+        # 1) Exact match (case-insensitive)
+        cur.execute(
+            "SELECT win_rate, matches_played FROM team_stats_esport WHERE LOWER(team_name) = LOWER(%s)",
+            (team_name,)
+        )
+        row = cur.fetchone()
 
-        if not teams or len(teams) == 0:
-            return 50.0
+        if not row:
+            # 2) Fuzzy match
+            names = _load_all_names(cur)
+            close = difflib.get_close_matches(team_name, names, n=1, cutoff=0.6)
+            if close:
+                cur.execute(
+                    "SELECT win_rate, matches_played FROM team_stats_esport WHERE team_name = %s",
+                    (close[0],)
+                )
+                row = cur.fetchone()
 
-        team_id = teams[0].get("idTeam")
-        if not team_id:
-            return 50.0
+        conn.close()
 
-        r_events = requests.get(BASE_EVENTS_URL, params={"id": team_id}, timeout=5)
-        if r_events.status_code != 200:
-            return 50.0
-
-        ev_data = r_events.json()
-        results = ev_data.get("results")
-
-        if not results:
-            return 50.0
-
-        wins = 0
-        total_games = 0
-
-        for match in results:
-            h_score = match.get("intHomeScore")
-            a_score = match.get("intAwayScore")
-
-            if h_score is None or a_score is None:
-                continue
-
-            try:
-                h_s = int(h_score)
-                a_s = int(a_score)
-            except ValueError:
-                continue
-
-            if str(team_id) == str(match.get("idHomeTeam")) and h_s > a_s:
-                wins += 1
-            elif str(team_id) == str(match.get("idAwayTeam")) and a_s > h_s:
-                wins += 1
-
-            total_games += 1
-
-        if total_games == 0:
-            return 50.0
-
-        return (wins / total_games) * 100.0
-
+        if row and row[1] >= 3:  # need at least 3 matches to trust the data
+            result = float(row[0])
+            _team_cache[team_name] = result
+            return result
     except Exception as e:
-        print(f"Esport Form Error for {team_name}: {e}")
-        return 50.0
+        print(f"Esport DB lookup error for '{team_name}': {e}")
+
+    return 50.0
 
 
 def train_esport_model():
-    """No-op: Phase 11 uses odds-anchored/form-based prediction."""
-    print("ESPORT Phase 11: Odds-Anchored engine active. No synthetic model training needed.")
+    """No-op: Phase 12 uses DB-backed win-rate engine."""
+    print("ESPORT Phase 12: DB win-rate engine active.")
 
 
 def predict_esport_match(home_team, away_team, odds_home=None, odds_away=None):

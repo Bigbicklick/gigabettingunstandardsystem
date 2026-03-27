@@ -27,6 +27,8 @@ services:
     restart: always
     ports:
       - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/bettingdb
     depends_on:
       - db
       - redis

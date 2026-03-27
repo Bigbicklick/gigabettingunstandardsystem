@@ -161,6 +161,17 @@ async function initDB() {
     await client.query(`ALTER TABLE matches_esport ADD COLUMN IF NOT EXISTS ai_probability DECIMAL DEFAULT NULL;`);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS team_stats_esport (
+        team_name VARCHAR(200) PRIMARY KEY,
+        wins INTEGER DEFAULT 0,
+        losses INTEGER DEFAULT 0,
+        win_rate DECIMAL DEFAULT 50.0,
+        matches_played INTEGER DEFAULT 0,
+        last_updated TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS config (
         key VARCHAR(100) PRIMARY KEY,
         value TEXT NOT NULL,
@@ -168,7 +179,7 @@ async function initDB() {
       );
     `);
 
-    console.log('All 5 tables initialized successfully (matches, matches_basket, matches_tennis, matches_esport, config).');
+    console.log('All 6 tables initialized successfully (matches, matches_basket, matches_tennis, matches_esport, team_stats_esport, config).');
   } catch (err) {
     console.error('Error initializing db', err);
   } finally {
@@ -577,12 +588,85 @@ async function fetchUpcomingEsportsMatches() {
 }
 
 
+async function fetchEsportHistoricalStats() {
+  const PANDASCORE_KEY = process.env.PANDASCORE_API_KEY;
+  if (!PANDASCORE_KEY) return;
+  console.log('Fetching esport historical stats from PandaScore + OpenDota...');
+
+  const teamStats = {}; // { teamName: { wins, losses } }
+  const bump = (name, won) => {
+    if (!name) return;
+    if (!teamStats[name]) teamStats[name] = { wins: 0, losses: 0 };
+    if (won) teamStats[name].wins++; else teamStats[name].losses++;
+  };
+
+  // PandaScore /past for CS2, LoL, Valorant (100 recent matches each)
+  const games = ['csgo', 'lol', 'valorant'];
+  for (const game of games) {
+    try {
+      const res = await axios.get(`https://api.pandascore.co/${game}/matches/past`, {
+        headers: { Authorization: `Bearer ${PANDASCORE_KEY}` },
+        params: { per_page: 100, sort: '-end_at' }
+      });
+      for (const m of res.data || []) {
+        if (!m.opponents || m.opponents.length < 2 || !m.winner) continue;
+        const t1 = m.opponents[0]?.opponent;
+        const t2 = m.opponents[1]?.opponent;
+        if (!t1?.name || !t2?.name) continue;
+        const winnerId = m.winner?.id;
+        bump(t1.name, winnerId === t1.id);
+        bump(t2.name, winnerId === t2.id);
+      }
+      console.log(`PandaScore historical: processed ${game}`);
+    } catch (e) {
+      console.error(`PandaScore historical error (${game}):`, e.message);
+    }
+  }
+
+  // OpenDota proMatches for Dota2 (free, no key needed)
+  try {
+    const res = await axios.get('https://api.opendota.com/api/proMatches', { timeout: 10000 });
+    for (const m of res.data || []) {
+      const r = m.radiant_name;
+      const d = m.dire_name;
+      if (!r || !d) continue;
+      bump(r, m.radiant_win === true);
+      bump(d, m.radiant_win === false);
+    }
+    console.log('OpenDota proMatches: processed Dota2 history');
+  } catch (e) {
+    console.error('OpenDota error:', e.message);
+  }
+
+  // Persist to DB
+  const client = await pool.connect();
+  let saved = 0;
+  for (const [name, s] of Object.entries(teamStats)) {
+    const total = s.wins + s.losses;
+    const wr = total > 0 ? parseFloat(((s.wins / total) * 100).toFixed(2)) : 50.0;
+    try {
+      await client.query(`
+        INSERT INTO team_stats_esport (team_name, wins, losses, win_rate, matches_played, last_updated)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (team_name) DO UPDATE SET
+          wins = EXCLUDED.wins, losses = EXCLUDED.losses,
+          win_rate = EXCLUDED.win_rate, matches_played = EXCLUDED.matches_played,
+          last_updated = NOW()
+      `, [name, s.wins, s.losses, wr, total]);
+      saved++;
+    } catch (e) { /* skip */ }
+  }
+  client.release();
+  console.log(`Esport historical stats: updated ${saved} teams in DB.`);
+}
+
 async function runFetchCycle() {
   await loadActiveOddsKeyFromDB(); // pick up any new key sent via Discord
   await fetchUpcomingMatches();
   await fetchUpcomingBasketballMatches();
   await fetchUpcomingTennisMatches();
   await fetchUpcomingEsportsMatches();
+  await fetchEsportHistoricalStats();
 }
 
 async function start() {
