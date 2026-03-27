@@ -87,12 +87,29 @@ def load_ai():
     if not os.path.exists(ml_pipeline_tennis.TENNIS_MODEL_FILE):
         logger.warning("Tennis Model not found. Skipping Tennis (non-critical).")
     
+    # Patch: if team_states.joblib was saved when ml_pipeline.py ran as __main__,
+    # pickle will look for __main__.TeamState. Point it to the correct class.
+    import sys
+    import types
+    _fake_main = types.ModuleType('__main__')
+    _fake_main.TeamState = ml_pipeline.TeamState
+    sys.modules.setdefault('__main__', _fake_main)
+    # Also cover the case where __main__ exists but lacks TeamState
+    if not hasattr(sys.modules.get('__main__'), 'TeamState'):
+        sys.modules['__main__'].TeamState = ml_pipeline.TeamState
+
     try:
         model = joblib.load(MODEL_PATH)
         model_btts = joblib.load('model_btts.joblib')
         model_ou = joblib.load('model_ou.joblib')
         model_corners = joblib.load('model_corners.joblib')
         team_states = joblib.load(STATE_PATH)
+        # Ensure all TeamState objects have the new L-system attributes (backward compat)
+        for ts in team_states.values():
+            if not hasattr(ts, 'l_points'):       ts.l_points = []
+            if not hasattr(ts, 'l_goals_scored'):  ts.l_goals_scored = []
+            if not hasattr(ts, 'l_goals_conceded'): ts.l_goals_conceded = []
+            if not hasattr(ts, 'l_opponent_elo'):  ts.l_opponent_elo = []
     except Exception as e:
         logger.error(f"Cannot load Football Model. Err: {e}")
         team_states = {}
