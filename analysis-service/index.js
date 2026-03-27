@@ -854,15 +854,25 @@ async function analyzeUpcomingTennisMatches() {
 async function analyzeUpcomingEsportsMatches() {
   const client = await pool.connect();
   try {
-    const res = await client.query(`SELECT * FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD');`);
+    const res = await client.query(`SELECT * FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' AND sent_to_discord = false AND status IN ('NS', 'TBD') LIMIT 20;`);
+    if (res.rows.length > 0) console.log(`Found ${res.rows.length} Esport matches to analyze.`);
     for (const match of res.rows) {
       try {
-        const ar = await axios.post(`${AI_SERVICE_URL}/predict_esport`, { home_team: match.home_team, away_team: match.away_team, odds_home: typeof match.odds_home !== 'undefined' ? parseFloat(match.odds_home) : null, odds_away: typeof match.odds_away !== 'undefined' ? parseFloat(match.odds_away) : null });
+        const ar = await axios.post(`${AI_SERVICE_URL}/predict_esport`, {
+          home_team: match.home_team,
+          away_team: match.away_team,
+          odds_home: match.odds_home ? parseFloat(match.odds_home) : null,
+          odds_away: match.odds_away ? parseFloat(match.odds_away) : null
+        }, { timeout: 8000 });
         const pred = ar.data.value_bet;
-        await client.query(`UPDATE matches_esport SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2, ai_probability = $3 WHERE fixture_id = $4`, [pred.recommended_bet, pred.edge_percent, pred.model_probability, match.fixture_id]);
-      } catch (e) {}
+        await client.query(`UPDATE matches_esport SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2, ai_probability = $3 WHERE fixture_id = $4`,
+          [pred.recommended_bet, pred.edge_percent, pred.model_probability, match.fixture_id]);
+      } catch (e) {
+        console.error(`Esport predict error for ${match.home_team} vs ${match.away_team}: ${e.message}`);
+      }
     }
   } catch (e) {
+    console.error('Error in analyzeUpcomingEsportsMatches:', e.message);
   } finally { client.release(); }
 }
 

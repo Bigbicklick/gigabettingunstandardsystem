@@ -139,18 +139,21 @@ def predict_esport_match(home_team, away_team, odds_home=None, odds_away=None):
                     "is_value": False
                 }
     else:
-        # No odds available (TheSportsDB data) — fallback to form
-        if h_form > a_form:
+        # No odds available — fallback to form comparison only
+        total = h_form + a_form if (h_form + a_form) > 0 else 100.0
+        prob_home = round((h_form / total) * 100, 2)
+        prob_away = round((a_form / total) * 100, 2)
+        if h_form >= a_form:
             return {
                 "recommended_bet": "Home Win",
-                "model_probability": round(h_form, 2),
-                "edge_percent": -5000,
+                "model_probability": prob_home,
+                "edge_percent": -5.0,
                 "is_value": False
             }
         else:
             return {
                 "recommended_bet": "Away Win",
-                "model_probability": round(a_form, 2),
-                "edge_percent": -5000,
+                "model_probability": prob_away,
+                "edge_percent": -5.0,
                 "is_value": False
             }
