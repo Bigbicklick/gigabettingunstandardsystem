@@ -98,7 +98,15 @@ discordClient.on('messageCreate', async (message) => {
         });
         
         akoCandidates.sort((a, b) => b.edge - a.edge);
-        const topAko = akoCandidates.slice(0, 4);
+        const uniqueAko = [];
+        const seenMatches = new Set();
+        for (const c of akoCandidates) {
+            if (!seenMatches.has(c.match)) {
+                uniqueAko.push(c);
+                seenMatches.add(c.match);
+            }
+        }
+        const topAko = uniqueAko.slice(0, 4);
         
         if (topAko.length >= 2) {
             let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
@@ -172,6 +180,36 @@ discordClient.on('messageCreate', async (message) => {
              }
         }
         
+        let akoCandidates = [];
+        res.rows.forEach(m => {
+            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+        });
+        akoCandidates.sort((a, b) => b.edge - a.edge);
+        const uniqueAko = [];
+        const seenMatches = new Set();
+        for (const c of akoCandidates) {
+            if (!seenMatches.has(c.match)) {
+                uniqueAko.push(c);
+                seenMatches.add(c.match);
+            }
+        }
+        const topAko = uniqueAko.slice(0, 4);
+        
+        if (topAko.length >= 2) {
+            let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
+            topAko.forEach((c, idx) => {
+               akoText += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${parseFloat(c.edge).toFixed(2)}%)\n`;
+            });
+            akoText += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
+            
+            if (currentReport.length + akoText.length > 1900) {
+                payloads.push(currentReport);
+                currentReport = akoText;
+            } else {
+                currentReport += akoText;
+            }
+        }
+
         if (currentReport.trim().length > 0) {
              payloads.push(currentReport);
         }
@@ -212,6 +250,27 @@ discordClient.on('messageCreate', async (message) => {
              let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
+        let akoCandidates = [];
+        res.rows.forEach(m => {
+            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+        });
+        akoCandidates.sort((a, b) => b.edge - a.edge);
+        const uniqueAko = [];
+        const seenMatches = new Set();
+        for (const c of akoCandidates) {
+            if (!seenMatches.has(c.match)) {
+                uniqueAko.push(c);
+                seenMatches.add(c.match);
+            }
+        }
+        const topAko = uniqueAko.slice(0, 4);
+        if (topAko.length >= 2) {
+            let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
+            topAko.forEach((c, idx) => akoText += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${parseFloat(c.edge).toFixed(2)}%)\n`);
+            akoText += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
+            if (cr.length + akoText.length > 1900) { payloads.push(cr); cr = akoText; } else cr += akoText;
+        }
+
         if (cr.trim().length > 0) payloads.push(cr);
         for (const p of payloads) await message.reply(p);
      } catch(e) {
@@ -244,11 +303,32 @@ discordClient.on('messageCreate', async (message) => {
              let selected_odds = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
              let chunk = `**${m.home_team} vs ${m.away_team}**\n> ML H2H: Home ${m.odds_home || '-'} | Away ${m.odds_away || '-'}\n> AI Prediction: ${m.ai_forecast || 'Pending...'} -> ${makeDecision(m.ai_edge, selected_odds)}\n\n`;
              if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
-        }
-        if (cr.trim().length > 0) payloads.push(cr);
-        for (const p of payloads) await message.reply(p);
-     } catch(e) {
-        console.error(e);
+         }
+         let akoCandidates = [];
+         res.rows.forEach(m => {
+             if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+         });
+         akoCandidates.sort((a, b) => b.edge - a.edge);
+         const uniqueAko = [];
+         const seenMatches = new Set();
+         for (const c of akoCandidates) {
+             if (!seenMatches.has(c.match)) {
+                 uniqueAko.push(c);
+                 seenMatches.add(c.match);
+             }
+         }
+         const topAko = uniqueAko.slice(0, 4);
+         if (topAko.length >= 2) {
+             let akoText = "\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
+             topAko.forEach((c, idx) => akoText += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${parseFloat(c.edge).toFixed(2)}%)\n`);
+             akoText += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
+             if (cr.length + akoText.length > 1900) { payloads.push(cr); cr = akoText; } else cr += akoText;
+         }
+
+         if (cr.trim().length > 0) payloads.push(cr);
+         for (const p of payloads) await message.reply(p);
+      } catch(e) {
+         console.error(e);
         return message.reply("Wystąpił błąd DB dla Esportu.");
      } finally { pgClient.release(); }
   }
@@ -494,7 +574,15 @@ async function sendHourlyReport() {
     });
     
     akoCandidates.sort((a, b) => b.edge - a.edge);
-    const topAko = akoCandidates.slice(0, 4);
+    const uniqueAko = [];
+    const seenMatches = new Set();
+    for (const c of akoCandidates) {
+        if (!seenMatches.has(c.match)) {
+            uniqueAko.push(c);
+            seenMatches.add(c.match);
+        }
+    }
+    const topAko = uniqueAko.slice(0, 4);
     
     if (topAko.length >= 2) {
         report += "\n\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
