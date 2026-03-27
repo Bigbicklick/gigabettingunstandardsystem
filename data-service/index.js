@@ -510,67 +510,69 @@ async function fetchUpcomingTennisMatches() {
 }
 
 async function fetchUpcomingEsportsMatches() {
-  const ODDS_API_KEY = getRandomOddsKey();
-  if (!ODDS_API_KEY) return;
-  console.log('Discovering active Esport tournaments from The Odds API...');
-  
-  // CS:GO was rebranded to CS2 in Sept 2023 — try both keys for compatibility
-  const esportsKeys = [
-    'esports_cs2_match_winner',
-    'esports_csgo_match_winner',
-    'esports_lol_match_winner',
-    'esports_league_of_legends',
-    'esports_dota2_match_winner',
-    'esports_valorant_match_winner',
-  ];
+  const PANDASCORE_KEY = process.env.PANDASCORE_API_KEY;
+  if (!PANDASCORE_KEY) {
+    console.log('No PANDASCORE_API_KEY provided. Esport fetching skipped.');
+    return;
+  }
+  console.log('Fetching upcoming Esport matches from PandaScore...');
+
+  // Fetch from 4 major titles in one unified call
+  const gameIds = ['csgo', 'lol', 'dota2', 'valorant'];
   const client = await pool.connect();
   let totalSaved = 0;
+  const now = new Date();
+  const cutoff = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days ahead
 
-  for (const sportKey of esportsKeys) {
-    await new Promise(r => setTimeout(r, 1500)); // 1.5s gap to avoid 429 rate limit
+  for (const game of gameIds) {
     try {
-      const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/`, {
-        params: { apiKey: getOddsKey(), regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
+      const res = await axios.get(`https://api.pandascore.co/${game}/matches/upcoming`, {
+        headers: { Authorization: `Bearer ${PANDASCORE_KEY}` },
+        params: { per_page: 50, sort: 'scheduled_at', 'filter[status]': 'not_started' }
       });
-      
+
       if (!res.data || !Array.isArray(res.data)) continue;
-      
+
       for (const match of res.data) {
-        if (new Date(match.commence_time) < new Date()) continue;
-        let oH = null, oA = null;
-        if (match.bookmakers && match.bookmakers.length > 0) {
-          const h2h = match.bookmakers[0].markets.find(m => m.key === 'h2h');
-          if (h2h && h2h.outcomes) {
-            const hOut = h2h.outcomes.find(o => o.name === match.home_team);
-            const aOut = h2h.outcomes.find(o => o.name === match.away_team);
-            if (hOut) oH = hOut.price;
-            if (aOut) oA = aOut.price;
-          }
-        }
-        
-        if (!oH || !oA) continue;
+        // Need exactly 2 resolved opponents
+        if (!match.opponents || match.opponents.length < 2) continue;
+        const op1 = match.opponents[0]?.opponent;
+        const op2 = match.opponents[1]?.opponent;
+        if (!op1?.name || !op2?.name) continue;
+
+        const scheduledAt = match.scheduled_at;
+        if (!scheduledAt) continue;
+        const matchDate = new Date(scheduledAt);
+        if (matchDate < now || matchDate > cutoff) continue;
+
+        const gameTitle = match.videogame_title?.name || match.videogame?.name || game.toUpperCase();
+        const leagueName = `${gameTitle} | ${match.league?.name || 'Unknown League'}`;
+        const fixtureId = `ps_${match.id}`;
 
         try {
           await client.query(`
-            INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_away) 
-            VALUES ($1, $2, $3, $4, $5, 'NS', $6, $7) ON CONFLICT (fixture_id) DO UPDATE SET odds_home = EXCLUDED.odds_home, odds_away = EXCLUDED.odds_away
-          `, [`esp_${match.id}`, sportKey, match.home_team, match.away_team, match.commence_time, oH, oA]);
+            INSERT INTO matches_esport (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_away)
+            VALUES ($1, $2, $3, $4, $5, 'NS', NULL, NULL)
+            ON CONFLICT (fixture_id) DO UPDATE SET
+              league_name = EXCLUDED.league_name,
+              date = EXCLUDED.date
+          `, [fixtureId, leagueName, op1.name, op2.name, scheduledAt]);
           totalSaved++;
-        } catch (e) { }
+        } catch (e) { /* ignore duplicate */ }
       }
     } catch (e) {
-      if (e.response && e.response.status === 401) {
-        await handleOdds401(`Esport:${sportKey}`);
-        break; // stop trying more sport keys with exhausted key
-      } else if (e.response && e.response.status === 404) {
-        // Sport key doesn't exist — silently skip
+      if (e.response?.status === 401) {
+        console.error('PandaScore API key invalid or expired (401).');
+        break;
+      } else if (e.response?.status === 429) {
+        console.warn(`PandaScore rate limit hit for ${game}, skipping.`);
       } else {
-        console.error(`Esport fetch error for ${sportKey}:`, e.message);
+        console.error(`PandaScore fetch error for ${game}:`, e.message);
       }
     }
   }
-  
-  if (totalSaved > 0) console.log(`Saved ${totalSaved} Esport matches.`);
+
+  if (totalSaved > 0) console.log(`PandaScore: saved/updated ${totalSaved} esport matches.`);
   client.release();
 }
 
