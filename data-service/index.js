@@ -515,6 +515,7 @@ async function fetchUpcomingEsportsMatches() {
   let totalSaved = 0;
 
   for (const sportKey of esportsKeys) {
+    await new Promise(r => setTimeout(r, 1500)); // 1.5s gap to avoid 429 rate limit
     try {
       const res = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/`, {
         params: { apiKey: getOddsKey(), regions: 'eu,uk', markets: 'h2h', oddsFormat: 'decimal' }
