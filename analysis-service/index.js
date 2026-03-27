@@ -96,8 +96,10 @@ discordClient.on('messageCreate', async (message) => {
 
         const formatEdge = (edge) => {
           if (edge === null || edge === undefined) return '—';
-          if (edge <= 0) return `${edge}%`;
-          return `**+${edge}%** ✅`;
+          if (edge >= 5.0)  return `**+${edge}%** 🔥 GRAMY`;
+          if (edge >= 3.0)  return `**+${edge}%** ✅`;
+          if (edge >= 0)    return `+${edge}% 🟡`;
+          return `${edge}% ❌`;
         };
         const formatOdds = (o) => o ? parseFloat(o).toFixed(2) : '-';
 
