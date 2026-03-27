@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import joblib
 import os
 import uvicorn
@@ -8,6 +8,7 @@ import ml_pipeline
 import ml_pipeline_basket
 import ml_pipeline_esport
 import ml_pipeline_tennis
+import ensemble_logic
 import logging
 import pandas as pd
 import numpy as np
@@ -94,6 +95,7 @@ def load_ai():
         team_states = joblib.load(STATE_PATH)
     except Exception as e:
         logger.error(f"Cannot load Football Model. Err: {e}")
+        team_states = {}
 
     try:
         team_states_basket = joblib.load(ml_pipeline_basket.BASKET_STATE_FILE)
@@ -270,34 +272,124 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
     class_map = {0: home, 1: "Draw", 2: away}
     prediction_label = class_map[best_idx]
     
-    # Value bet logic
+    # -------------------------------------------------------------------
+    # ENSEMBLE: Extract individual sub-model probabilities from VotingClassifier
+    # -------------------------------------------------------------------
+    try:
+        xgb_probs_h2h = model.estimators_[0].predict_proba(X)[0].tolist()
+    except Exception:
+        xgb_probs_h2h = [p_home, p_draw, p_away]
+    try:
+        rf_probs_h2h = model.estimators_[1].predict_proba(X)[0].tolist()
+    except Exception:
+        rf_probs_h2h = [p_home, p_draw, p_away]
+    try:
+        lr_probs_h2h = model.estimators_[2].predict_proba(X)[0].tolist()
+    except Exception:
+        lr_probs_h2h = [p_home, p_draw, p_away]
+
+    # -------------------------------------------------------------------
+    # L-SYSTEM: Compute probability from 24-game TeamState history
+    # -------------------------------------------------------------------
+    h_win_rate, h_draw_rate, h_gd_pg, h_avg_opp_elo, h_l_games = team_states[home].get_l_system_features()
+    a_win_rate, a_draw_rate, a_gd_pg, a_avg_opp_elo, a_l_games = team_states[away].get_l_system_features()
+
+    lsys_probs_h2h = ensemble_logic.compute_l_system_prob(
+        h_elo=h_elo,
+        a_elo=a_elo,
+        h_win_rate=h_win_rate,
+        a_win_rate=a_win_rate,
+        h_draw_rate=h_draw_rate,
+        a_draw_rate=a_draw_rate,
+        h_gd_per_game=h_gd_pg,
+        a_gd_per_game=a_gd_pg,
+    )
+
+    # Weighted ensemble: final_prob = 0.4*XGB + 0.2*RF + 0.2*LR + 0.2*L_SYSTEM
+    match_label = f"{home} vs {away}"
+    final_probs_h2h = ensemble_logic.compute_weighted_ensemble(
+        xgb_probs_h2h, rf_probs_h2h, lr_probs_h2h, lsys_probs_h2h
+    )
+    ensemble_logic.log_model_outputs(
+        match_label, xgb_probs_h2h, rf_probs_h2h, lr_probs_h2h, lsys_probs_h2h, final_probs_h2h
+    )
+
+    fp_home = float(final_probs_h2h[0])
+    fp_draw = float(final_probs_h2h[1])
+    fp_away = float(final_probs_h2h[2])
+
+    # -------------------------------------------------------------------
+    # H2H VALUE BET — Safety Filters + Consensus Check
+    # -------------------------------------------------------------------
     value_bet = False
     best_bet = None
     highest_edge = -100.0
     model_prob_for_bet = 0.0
     bookie_odds = 0.0
-    
+    models_agreeing_count = 0
+    agreeing_names: List[str] = []
+    h2h_reasoning = ""
+    h2h_final_prob = 0.0
+    h2h_value_pct = 0.0
+
     if req.odds_home and req.odds_draw and req.odds_away:
-        i_home = calculate_implied_prob(req.odds_home)
-        i_draw = calculate_implied_prob(req.odds_draw)
-        i_away = calculate_implied_prob(req.odds_away)
-        
-        edges = {
-            home: (p_home - i_home, p_home, req.odds_home),
-            "Draw": (p_draw - i_draw, p_draw, req.odds_draw),
-            away: (p_away - i_away, p_away, req.odds_away)
-        }
-        
-        for k, (edge, m_prob, _odds) in edges.items():
-            if edge > highest_edge:
-                highest_edge = edge
-                best_bet = k
-                model_prob_for_bet = m_prob
-                bookie_odds = _odds
-                
-        # Value bet requires edge > 5% and confidence logic
-        if highest_edge > 0.05:
+        # Each candidate: (label, final_ensemble_prob, odds, class_index)
+        outcomes_h2h = [
+            (home,   fp_home, req.odds_home,  0),
+            ("Draw", fp_draw, req.odds_draw,  1),
+            (away,   fp_away, req.odds_away,  2),
+        ]
+
+        for outcome_label, final_prob, odds_val, outcome_idx in outcomes_h2h:
+            # FILTER 1: Reject odds > 10
+            if odds_val > ensemble_logic.MAX_ODDS:
+                ensemble_logic.log_rejected(match_label, outcome_label, odds_val, final_prob,
+                                            final_prob - 1.0/odds_val,
+                                            f"Odds {odds_val} > MAX {ensemble_logic.MAX_ODDS}")
+                continue
+            # FILTER 2: Require final_prob > 0.65
+            if final_prob < ensemble_logic.MIN_FINAL_PROB:
+                ensemble_logic.log_rejected(match_label, outcome_label, odds_val, final_prob,
+                                            final_prob - 1.0/odds_val,
+                                            f"final_prob {final_prob:.1%} < 65%")
+                continue
+            # FILTER 3: Require value > 0.05
+            value_candidate = final_prob - (1.0 / odds_val)
+            if value_candidate <= ensemble_logic.MIN_VALUE:
+                ensemble_logic.log_rejected(match_label, outcome_label, odds_val, final_prob,
+                                            value_candidate,
+                                            f"value {value_candidate:.1%} <= 5%")
+                continue
+            # FILTER 4: Require at least 2 models agreeing
+            cnt, names = ensemble_logic.count_models_agreeing(
+                outcome_idx, xgb_probs_h2h, rf_probs_h2h, lr_probs_h2h, lsys_probs_h2h
+            )
+            if cnt < ensemble_logic.MIN_MODELS_AGREE:
+                ensemble_logic.log_rejected(match_label, outcome_label, odds_val, final_prob,
+                                            value_candidate,
+                                            f"only {cnt} model(s) agree — need {ensemble_logic.MIN_MODELS_AGREE}")
+                continue
+            # All filters passed — take best value candidate
+            if value_candidate > highest_edge:
+                highest_edge = value_candidate
+                best_bet = outcome_label
+                model_prob_for_bet = final_prob
+                bookie_odds = odds_val
+                models_agreeing_count = cnt
+                agreeing_names = names
+                h2h_final_prob = final_prob
+                h2h_value_pct = value_candidate
+
+        if best_bet is not None:
             value_bet = True
+            h2h_reasoning = ensemble_logic.build_reasoning(
+                h_elo, a_elo, h_win_rate, a_win_rate,
+                bookie_odds, agreeing_names, h2h_final_prob, h2h_value_pct
+            )
+            ensemble_logic.log_decision(
+                match_label, best_bet, bookie_odds, h2h_final_prob,
+                h2h_value_pct, models_agreeing_count, h2h_reasoning
+            )
 
     recommended_stake = 0.0
     if value_bet and best_bet:
@@ -501,8 +593,11 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             if kf > 0:
                 dnb_recommended_stake = round((kf * 0.25) * 100, 2)
 
-    confidence_score = float(max(p_home, p_draw, p_away) * 10) # 0 to 10
-    
+    confidence_score = float(max(fp_home, fp_draw, fp_away) * 10) # 0 to 10 (uses ensemble)
+    in_preferred_range = (
+        ensemble_logic.PREFERRED_ODDS_LOW <= bookie_odds <= ensemble_logic.PREFERRED_ODDS_HIGH
+    ) if bookie_odds else False
+
     return {
         "match": f"{home} vs {away}",
         "raw_probabilities": {
@@ -512,15 +607,26 @@ def predict(req: PredictionRequest) -> Dict[str, Any]:
             "btts_yes": round(p_btts_yes * 100, 2),
             "btts_no": round(p_btts_no * 100, 2)
         },
+        "ensemble_probabilities": {
+            "home": round(fp_home * 100, 2),
+            "draw": round(fp_draw * 100, 2),
+            "away": round(fp_away * 100, 2),
+        },
         "most_likely_outcome": prediction_label,
         "value_bet": {
             "is_value": value_bet,
             "recommended_bet": best_bet,
-            "edge_percent": round(highest_edge * 100, 2),
+            "edge_percent": round(h2h_value_pct * 100, 2),
             "model_probability": round(model_prob_for_bet * 100, 2),
+            "final_prob_pct": round(h2h_final_prob * 100, 2),
+            "value_pct": round(h2h_value_pct * 100, 2),
             "bookmaker_odds": bookie_odds,
             "confidence_score": round(confidence_score, 1),
-            "recommended_stake_percentage": recommended_stake
+            "recommended_stake_percentage": recommended_stake,
+            "models_agreeing": models_agreeing_count,
+            "agreeing_model_names": agreeing_names,
+            "reasoning": h2h_reasoning,
+            "in_preferred_odds_range": in_preferred_range,
         },
         "btts_value_bet": {
             "is_value": btts_value_bet,

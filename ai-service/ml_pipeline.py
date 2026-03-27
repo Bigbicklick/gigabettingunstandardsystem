@@ -57,8 +57,12 @@ def download_data():
     data = data.sort_values(by='Date').reset_index(drop=True)
     return data
 
+L_SYSTEM_WINDOW = 24  # Number of matches used by L-system
+
+
 class TeamState:
     def __init__(self):
+        # --- ML model features (5-game rolling window, DO NOT CHANGE) ---
         self.goals_scored = []
         self.goals_conceded = []
         self.shots = []
@@ -66,11 +70,17 @@ class TeamState:
         self.sot = []
         self.sot_conceded = []
         self.points = []
-        self.points = []
         self.streak = 0
         self.elo = 1500.0
 
-    def update(self, gs, gc, shots, shots_c, sot, sot_c, pts):
+        # --- L-system history (last 24 matches) ---
+        self.l_points = []          # 3=win, 1=draw, 0=loss
+        self.l_goals_scored = []    # goals scored per match
+        self.l_goals_conceded = []  # goals conceded per match
+        self.l_opponent_elo = []    # opponent ELO at time of match
+
+    def update(self, gs, gc, shots, shots_c, sot, sot_c, pts, opponent_elo=1500.0):
+        # ML 5-game window
         self.goals_scored.append(gs)
         self.goals_conceded.append(gc)
         self.shots.append(shots)
@@ -87,6 +97,17 @@ class TeamState:
             self.sot.pop(0)
             self.sot_conceded.pop(0)
             self.points.pop(0)
+
+        # L-system 24-game window
+        self.l_points.append(pts)
+        self.l_goals_scored.append(gs)
+        self.l_goals_conceded.append(gc)
+        self.l_opponent_elo.append(opponent_elo)
+        if len(self.l_points) > L_SYSTEM_WINDOW:
+            self.l_points.pop(0)
+            self.l_goals_scored.pop(0)
+            self.l_goals_conceded.pop(0)
+            self.l_opponent_elo.pop(0)
             
         if pts == 3:
             self.streak = self.streak + 1 if self.streak > 0 else 1
@@ -109,6 +130,17 @@ class TeamState:
             self.streak,
             len(self.points)
         )
+
+    def get_l_system_features(self):
+        """Returns (win_rate, draw_rate, gd_per_game, avg_opponent_elo, games_played)."""
+        n = len(self.l_points)
+        if n == 0:
+            return 0.33, 0.33, 0.0, 1500.0, 0
+        wins  = sum(1 for p in self.l_points if p == 3)
+        draws = sum(1 for p in self.l_points if p == 1)
+        gd    = sum(self.l_goals_scored) - sum(self.l_goals_conceded)
+        avg_opp_elo = sum(self.l_opponent_elo) / n
+        return wins / n, draws / n, gd / n, avg_opp_elo, n
 
 def feature_engineering(data):
     """Engineers rolling averages and form for teams chronologically."""
@@ -184,17 +216,20 @@ def feature_engineering(data):
             corners_val = 1 if (row['HC'] + row['AC']) > 9.5 else 0
             labels_corners.append(corners_val)
             
+        h_elo_before = team_states[home].elo
+        a_elo_before = team_states[away].elo
+
         if ftr == 'H':
-            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 3)
-            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 0)
+            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 3, opponent_elo=a_elo_before)
+            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 0, opponent_elo=h_elo_before)
             s_home, s_away = 1.0, 0.0
         elif ftr == 'A':
-            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 0)
-            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 3)
+            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 0, opponent_elo=a_elo_before)
+            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 3, opponent_elo=h_elo_before)
             s_home, s_away = 0.0, 1.0
         else:
-            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 1)
-            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 1)
+            team_states[home].update(row['FTHG'], row['FTAG'], row['HS'], row['AS'], row['HST'], row['AST'], 1, opponent_elo=a_elo_before)
+            team_states[away].update(row['FTAG'], row['FTHG'], row['AS'], row['HS'], row['AST'], row['HST'], 1, opponent_elo=h_elo_before)
             s_home, s_away = 0.5, 0.5
             
         # Elo Update Algorithm

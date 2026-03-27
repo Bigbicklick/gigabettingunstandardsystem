@@ -260,17 +260,22 @@ async function analyzeUpcomingMatches() {
         const dnb = prediction.dnb_value_bet;
         const timeStr = new Date(match.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
         
-        // H2H Signal
-        if (h2h && h2h.is_value && h2h.confidence_score > 7.0 && h2h.edge_percent > 5.0) {
+        // H2H Signal — uses ensemble final_prob_pct and value_pct
+        if (h2h && h2h.is_value && h2h.confidence_score > 7.0 && h2h.value_pct > 5.0) {
+          const modelsLine = h2h.agreeing_model_names && h2h.agreeing_model_names.length
+            ? h2h.agreeing_model_names.map(m => `${m} ✓`).join(' | ') + ` (${h2h.models_agreeing}/4)`
+            : `${h2h.models_agreeing || '?'}/4`;
+          const rangeFlag = h2h.in_preferred_odds_range ? ' ✅ preferred range' : '';
           const msg = `
 🔥 **GIGA SIGNAL: H2H MARKET** 🔥
 ⚽ **MATCH**: ${match.home_team} vs ${match.away_team}
 ⏰ **TIME**: ${timeStr}
-📊 **PREDICTION**: ${prediction.most_likely_outcome}
-💰 **MIN ODDS**: ${h2h.bookmaker_odds}
-📈 **MODEL PROBABILITY**: ${h2h.model_probability}%
-✅ **VALUE BET EDGE**: ${h2h.edge_percent}%
-🧠 **CONFIDENCE**: ${h2h.confidence_score}/10
+📊 **PREDICTION**: ${h2h.recommended_bet}
+💰 **ODDS**: ${h2h.bookmaker_odds}${rangeFlag}
+📈 **FINAL PROBABILITY**: ${h2h.final_prob_pct || h2h.model_probability}%
+✅ **VALUE**: +${h2h.value_pct || h2h.edge_percent}%
+🧠 **MODELS AGREEING**: ${modelsLine}
+💡 **REASONING**: ${h2h.reasoning || 'N/A'}
 💸 **SUGGESTED STAKE**: ${h2h.recommended_stake_percentage}% of bankroll (1/4 Kelly)`;
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msg.trim() });
         }
