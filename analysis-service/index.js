@@ -284,7 +284,7 @@ async function analyzeUpcomingMatches() {
     const res = await client.query(`
       SELECT * FROM matches 
       WHERE date > NOW() 
-      AND date < NOW() + INTERVAL '24 hours'
+      AND date < NOW() + INTERVAL '48 hours'
       AND sent_to_discord = false 
       AND odds_home IS NOT NULL
       AND status IN ('NS', 'TBD');
@@ -451,11 +451,9 @@ async function analyzeUpcomingMatches() {
         ]);
         
       } catch (aiError) {
-        // Normal to fail 404 if team wasn't in historical database (e.g. newly promoted)
         if (aiError.response && aiError.response.status === 404) {
-          console.log(`Skipping ${match.home_team} vs ${match.away_team} (No historical AI data)`);
-          // Mark as processed so we don't spam errors
-          await client.query(`UPDATE matches SET sent_to_discord = true WHERE fixture_id = $1`, [match.fixture_id]);
+          // Team not in training data — do NOT permanently block. It will retry next cycle.
+          console.log(`Skipping ${match.home_team} vs ${match.away_team} (No historical AI data — will retry)`);
         } else {
           console.error(`Error analyzing match ${match.fixture_id}:`, aiError.message);
         }
@@ -476,12 +474,12 @@ async function sendHourlyReport() {
     const res = await client.query(`
       SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
       FROM matches 
-      WHERE date > NOW() AND date < NOW() + INTERVAL '24 hours'
+      WHERE date > NOW() AND date < NOW() + INTERVAL '72 hours'
       AND ai_forecast IS NOT NULL
     `);
     
     if (res.rows.length === 0) {
-      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy piłkarskich do analizy na najbliższe 24h z 18 Giga Lig Europejskich." });
+      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy piłkarskich z prognozą AI na najbliższe 72h. (Przerwa reprezentacyjna lub brak meczów ligowych w tym oknie.)" });
       return;
     }
     
