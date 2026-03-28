@@ -727,71 +727,6 @@ async function analyzeUpcomingMatches() {
   }
 }
 
-async function sendHourlyReport() {
-  if (!DISCORD_WEBHOOK_URL) return;
-  const client = await pool.connect();
-  try {
-    const res = await client.query(`
-      SELECT home_team, away_team, ai_forecast, ai_edge, ai_btts_forecast, ai_btts_edge, ai_ou_forecast, ai_ou_edge, ai_corners_forecast, ai_corners_edge, ai_dc_forecast, ai_dc_edge, ai_dnb_forecast, ai_dnb_edge
-      FROM matches 
-      WHERE date > NOW() AND date < NOW() + INTERVAL '72 hours'
-      AND ai_forecast IS NOT NULL
-    `);
-    
-    if (res.rows.length === 0) {
-      await axios.post(DISCORD_WEBHOOK_URL, { content: "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nBrak nadchodzących meczy piłkarskich z prognozą AI na najbliższe 72h. (Przerwa reprezentacyjna lub brak meczów ligowych w tym oknie.)" });
-      return;
-    }
-    
-    let report = "ℹ️ **RAPORT GODZINNY [Multi-Market AI]:**\nPrzeanalizowałem dzisiejsze mecze w tle. Szukam w pełni bezpiecznych matematycznych przewag. Brak pewniaków. Lista zbadanych spotkań w oparciu o The Odds API:\n\n";
-    let count = 0;
-    for (const m of res.rows) {
-      if (count < 10) {
-         const formatEdge = (edge) => (!edge || edge <= -5000) ? 'Brak kursów' : `${edge}% - ${getEdgeAdvice(edge)}`;
-         
-         report += `⚽ **${m.home_team} vs ${m.away_team}**\n`;
-         report += `   ├─ Zwycięzca: ${m.ai_forecast} (Edge: ${formatEdge(m.ai_edge)})\n`;
-         report += `   ├─ Podwójna Szansa (DC): ${m.ai_dc_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_dc_edge)})\n`;
-         report += `   ├─ Remis Nie Ma Zakładu (DNB): ${m.ai_dnb_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_dnb_edge)})\n`;
-         report += `   ├─ O.D. Strzelą: ${m.ai_btts_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_btts_edge)})\n`;
-         report += `   ├─ Liczba Goli: ${m.ai_ou_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_ou_edge)})\n`;
-         report += `   └─ Rzuty Rożne: ${m.ai_corners_forecast || 'N/A'} (Edge: ${formatEdge(m.ai_corners_edge)})\n\n`;
-         count++;
-      }
-    }
-    if (res.rows.length > 15) {
-       report += `\n...oraz ${res.rows.length - 15} innych meczów (łącznie ${res.rows.length}).`;
-    }
-    
-    let akoCandidates = [];
-    res.rows.forEach(m => {
-        if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
-        if (m.ai_btts_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
-        if (m.ai_ou_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
-        if (m.ai_corners_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
-        if (m.ai_dc_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
-        if (m.ai_dnb_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dnb_forecast, edge: m.ai_dnb_edge });
-    });
-    
-    akoCandidates.sort((a, b) => b.edge - a.edge);
-    const topAko = akoCandidates.slice(0, 4);
-    
-    if (topAko.length >= 2) {
-        report += "\n\n🎟️ **SUGEROWANY KUPON AKO (Z NAJLEPSZYCH VALUEBETÓW)** 🎟️\n";
-        topAko.forEach((c, idx) => {
-           report += `${idx + 1}. ${c.match} -> **${c.pick}** (Edge: ${c.edge}%)\n`;
-        });
-        report += "Zbuduj z tego kupon powiększając potencjalny zysk! 💸\n";
-    }
-    
-    await axios.post(DISCORD_WEBHOOK_URL, { content: report });
-    console.log('Sent hourly report to Discord.');
-  } catch (err) {
-    console.error('Error sending hourly report:', err);
-  } finally {
-    client.release();
-  }
-}
 
 async function analyzeUpcomingBasketMatches() {
   console.log('Running analysis on upcoming NBA matches...');
@@ -949,12 +884,7 @@ function start() {
     analyzeUpcomingEsportsMatches();
   });
 
-  // Run every hour at minute 0 for the summary report
-  cron.schedule('0 * * * *', () => {
-    sendHourlyReport();
-  });
-  
-  console.log('Analysis service scheduled to run every 10 minutes (Signals) and every 1 hour (Reports).');
+  console.log('Analysis service scheduled to run every 10 minutes (Signals).');
 }
 
 start();
