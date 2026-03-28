@@ -146,50 +146,43 @@ discordClient.on('messageCreate', async (message) => {
                 else if (m.ai_forecast === m.away_team) winPct = h2hProbs[2];
               }
             }
-            const winPctStr = winPct !== null ? ` — **${winPct}% szans**` : '';
-            chunk += `> ${sourceLabel}: **${m.ai_forecast}** najprawdopodobniej wygra${winPctStr}\n`;
+            const winPctStr = winPct !== null ? ` — **${winPct}%**` : '';
+            chunk += `> ${sourceLabel}: **${m.ai_forecast}** wygra${winPctStr} szans statystycznie\n`;
 
             // BTTS with %
             if (m.ai_btts_forecast) {
               const bttsProbs = fairProb(m.odds_btts_yes, m.odds_btts_no);
               const bttsPct = bttsProbs ? (m.ai_btts_forecast === 'BTTS Yes' ? bttsProbs[0] : bttsProbs[1]) : null;
-              chunk += `> ⚽ BTTS: **${m.ai_btts_forecast}**${bttsPct !== null ? ` (${bttsPct}% szans)` : ''}\n`;
+              chunk += `> ⚽ BTTS: **${m.ai_btts_forecast}**${bttsPct !== null ? ` — ${bttsPct}% szans` : ''}\n`;
             }
 
             // O/U with %
             if (m.ai_ou_forecast) {
               const ouProbs = fairProb(m.odds_ou_over, m.odds_ou_under);
               const ouPct = ouProbs ? (m.ai_ou_forecast.includes('Over') ? ouProbs[0] : ouProbs[1]) : null;
-              chunk += `> 🥅 Gole O/U: **${m.ai_ou_forecast}**${ouPct !== null ? ` (${ouPct}% szans)` : ''}\n`;
+              chunk += `> 🥅 Gole O/U: **${m.ai_ou_forecast}**${ouPct !== null ? ` — ${ouPct}% szans` : ''}\n`;
             }
 
             // Corners with %
             if (m.ai_corners_forecast) {
               const corProbs = fairProb(m.odds_corners_over, m.odds_corners_under);
               const corPct = corProbs ? (m.ai_corners_forecast.includes('Over') ? corProbs[0] : corProbs[1]) : null;
-              chunk += `> 🚩 Corners: **${m.ai_corners_forecast}**${corPct !== null ? ` (${corPct}% szans)` : ''}\n`;
+              chunk += `> 🚩 Corners: **${m.ai_corners_forecast}**${corPct !== null ? ` — ${corPct}% szans` : ''}\n`;
             }
 
             if (m.ai_dc_forecast)  chunk += `> 🛡️ DC: **${m.ai_dc_forecast}**\n`;
             if (m.ai_dnb_forecast) chunk += `> ⚖️ DNB: **${m.ai_dnb_forecast}**\n`;
 
-            // Value summary line
-            if (edge >= 5.0) {
-              chunk += `> 💎 **GRAMY: ${m.ai_forecast} @ ${formatOdds(m.odds_home)} (Edge: +${edge}%)** 🔥\n`;
-            } else if (edge >= 3.0) {
-              chunk += `> 💎 Value: **+${edge}%** ✅ — warto rozważyć\n`;
-            } else if (edge >= 0) {
-              chunk += `> 💎 Edge: +${edge}% 🟡 — neutralny\n`;
+            // Recommendation based purely on statistical probability
+            if (winPct !== null && winPct >= 65) {
+              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — model pewny (${winPct}%) 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+            } else if (winPct !== null && winPct >= 58) {
+              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** (${winPct}%)\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
             } else {
-              chunk += `> 💎 Brak value betu (edge: ${edge}%) — kurs rynkowy\n`;
+              chunk += `> ℹ️ Brak pewnej prognozy (${winPct !== null ? winPct + '%' : 'brak danych'})\n`;
             }
-
-            // AKO candidates
-            if (m.ai_edge > 3.0)         akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
-            if (m.ai_btts_edge > 3.0)    akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_btts_forecast, edge: m.ai_btts_edge });
-            if (m.ai_ou_edge > 3.0)      akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_ou_forecast, edge: m.ai_ou_edge });
-            if (m.ai_corners_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_corners_forecast, edge: m.ai_corners_edge });
-            if (m.ai_dc_edge > 3.0)      akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_dc_forecast, edge: m.ai_dc_edge });
           } else {
             chunk += `> 🤖 AI: oczekiwanie na analizę...\n`;
           }
@@ -204,12 +197,12 @@ discordClient.on('messageCreate', async (message) => {
         }
 
         // AKO coupon
-        akoCandidates.sort((a, b) => b.edge - a.edge);
+        akoCandidates.sort((a, b) => b.prob - a.prob);
         const topAko = [...new Map(akoCandidates.map(c => [c.match, c])).values()].slice(0, 4);
         if (topAko.length >= 2) {
           let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
           topAko.forEach((c, i) => {
-            akoText += `${i + 1}. ${c.match} → **${c.pick}** (Edge: +${c.edge}%)\n`;
+            akoText += `${i + 1}. ${c.match} → **${c.pick}** (${c.prob}% statystycznie)\n`;
           });
           akoText += "💸 Postaw jako AKO dla większego zysku!\n";
           if (currentReport.length + akoText.length > 1900) {
@@ -297,27 +290,25 @@ discordClient.on('messageCreate', async (message) => {
               if (h2hP) winPct = m.ai_forecast === m.home_team ? h2hP[0] : h2hP[1];
             }
             const sourceLabel = (m.ai_probability && parseFloat(m.ai_probability) > 0) ? '🧠 ML AI' : '📊 Kursowe AI';
-            const winStr = winPct !== null ? ` — **${winPct}% szans**` : '';
-            chunk += `> ${sourceLabel}: **${m.ai_forecast}** najprawdopodobniej wygra${winStr}\n`;
+            const winStr = winPct !== null ? ` — **${winPct}%**` : '';
+            chunk += `> ${sourceLabel}: **${m.ai_forecast}** wygra${winStr} szans statystycznie\n`;
 
             // Totals O/U with %
             if (m.odds_totals_over && m.odds_totals_under) {
               const totP = fairProb2(m.odds_totals_over, m.odds_totals_under);
-              if (totP) chunk += `> 🏹 Totals O/U: Over ${totP[0]}% szans / Under ${totP[1]}% szans\n`;
+              if (totP) chunk += `> 🏹 Totals O/U: Over ${totP[0]}% / Under ${totP[1]}%\n`;
             }
 
-            // Value line
-            if (edge >= 5.0) {
-              chunk += `> 💎 **GRAMY: ${m.ai_forecast} (Edge: +${edge}%)** 🔥\n`;
-            } else if (edge >= 3.0) {
-              chunk += `> 💎 Value: **+${edge}%** ✅ — warto rozważyć\n`;
-            } else if (edge >= 0) {
-              chunk += `> 💎 Edge: +${edge}% 🟡 — neutralny\n`;
+            // Recommendation based purely on statistical probability
+            if (winPct !== null && winPct >= 65) {
+              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — model pewny (${winPct}%) 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+            } else if (winPct !== null && winPct >= 58) {
+              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** (${winPct}%)\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
             } else {
-              chunk += `> 💎 Brak value betu (edge: ${edge}%) — kurs rynkowy\n`;
+              chunk += `> ℹ️ Brak pewnej prognozy (${winPct !== null ? winPct + '%' : 'brak danych'})\n`;
             }
-
-            if (m.ai_edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
           } else {
             chunk += `> 🤖 AI: oczekiwanie na analizę...\n`;
           }
@@ -332,11 +323,11 @@ discordClient.on('messageCreate', async (message) => {
         }
 
         // AKO coupon
-        akoCandidates.sort((a, b) => b.edge - a.edge);
+        akoCandidates.sort((a, b) => b.prob - a.prob);
         const topAko = [...new Map(akoCandidates.map(c => [c.match, c])).values()].slice(0, 4);
         if (topAko.length >= 2) {
           let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
-          topAko.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (Edge: +${c.edge}%)\n`; });
+          topAko.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (${c.prob}% statystycznie)\n`; });
           akoText += "💸 Postaw jako AKO dla większego zysku!\n";
           if (currentReport.length + akoText.length > 1900) { payloads.push(currentReport); currentReport = akoText; }
           else currentReport += akoText;
@@ -404,13 +395,17 @@ discordClient.on('messageCreate', async (message) => {
               winPct = m.ai_forecast === m.home_team ? probs[0] : probs[1];
             }
             const srcLabel = (m.ai_probability && parseFloat(m.ai_probability) > 0) ? '🧠 ML AI' : '📊 Kursowe AI';
-            const winStr = winPct !== null ? ` — **${winPct}% szans**` : '';
-            chunk += `> ${srcLabel}: **${m.ai_forecast}** wygra${winStr}\n`;
-            if (edge >= 5.0)      chunk += `> 💎 **GRAMY: ${m.ai_forecast} (Edge: +${edge}%)** 🔥\n`;
-            else if (edge >= 3.0) chunk += `> 💎 Value: **+${edge}%** ✅ — warto rozważyć\n`;
-            else if (edge >= 0)   chunk += `> 💎 Edge: +${edge}% 🟡 — neutralny\n`;
-            else                  chunk += `> 💎 Brak value betu (edge: ${edge}%) — kurs rynkowy\n`;
-            if (edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, edge: m.ai_edge });
+            const winStr = winPct !== null ? ` — **${winPct}%**` : '';
+            chunk += `> ${srcLabel}: **${m.ai_forecast}** wygra${winStr} szans statystycznie\n`;
+            if (winPct !== null && winPct >= 65) {
+              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — model pewny (${winPct}%) 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+            } else if (winPct !== null && winPct >= 58) {
+              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** (${winPct}%)\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+            } else {
+              chunk += `> ℹ️ Brak pewnej prognozy (${winPct !== null ? winPct + '%' : 'brak danych'})\n`;
+            }
           } else {
             chunk += `> 🤖 AI: oczekiwanie na analizę...\n`;
           }
@@ -418,11 +413,11 @@ discordClient.on('messageCreate', async (message) => {
           if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
 
-        akoCandidates.sort((a, b) => b.edge - a.edge);
+        akoCandidates.sort((a, b) => b.prob - a.prob);
         const topAko = [...new Map(akoCandidates.map(c => [c.match, c])).values()].slice(0, 4);
         if (topAko.length >= 2) {
           let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
-          topAko.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (Edge: +${c.edge}%)\n`; });
+          topAko.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (${c.prob}% statystycznie)\n`; });
           akoText += "💸 Postaw jako AKO dla większego zysku!\n";
           if (cr.length + akoText.length > 1900) { payloads.push(cr); cr = akoText; } else cr += akoText;
         }
@@ -489,20 +484,19 @@ discordClient.on('messageCreate', async (message) => {
             }
             const hasOdds = m.odds_home && m.odds_away;
             const srcLabel = hasOdds ? '🧠 ML AI' : '📊 Forma AI';
-            const winStr = winPct !== null ? ` — **${winPct}% szans**` : '';
-            chunk += `> ${srcLabel}: **${winner}** wygra${winStr}\n`;
-            if (edge <= -100 || (!hasOdds && edge < 0)) {
-              chunk += `> 💎 Brak kursów — predykcja z formy drużyny\n`;
-            } else if (edge >= 5.0) {
-              chunk += `> 💎 **GRAMY: ${winner} (Edge: +${edge}%)** 🔥\n`;
-            } else if (edge >= 3.0) {
-              chunk += `> 💎 Value: **+${edge}%** ✅ — warto rozważyć\n`;
-            } else if (edge >= 0) {
-              chunk += `> 💎 Edge: +${edge}% 🟡 — neutralny\n`;
+            const winStr = winPct !== null ? ` — **${winPct}%**` : '';
+            chunk += `> ${srcLabel}: **${winner}** wygra${winStr} szans statystycznie\n`;
+            if (winPct !== null && winPct >= 65) {
+              chunk += `> ✅ **GRAMY: ${winner}** — model pewny (${winPct}%) 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: winner, prob: winPct });
+            } else if (winPct !== null && winPct >= 58) {
+              chunk += `> ✅ Warto rozważyć: **${winner}** (${winPct}%)\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: winner, prob: winPct });
+            } else if (!hasOdds) {
+              chunk += `> ℹ️ Predykcja z formy — brak kursów bukmachera\n`;
             } else {
-              chunk += `> 💎 Brak value betu (edge: ${edge}%) — kurs rynkowy\n`;
+              chunk += `> ℹ️ Brak pewnej prognozy (${winPct !== null ? winPct + '%' : 'brak danych'})\n`;
             }
-            if (edge > 3.0) akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: winner, edge: m.ai_edge });
           } else {
             chunk += `> 🤖 AI: oczekiwanie na analizę...\n`;
           }
@@ -510,11 +504,11 @@ discordClient.on('messageCreate', async (message) => {
           if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
         }
 
-        akoCandidates.sort((a, b) => b.edge - a.edge);
+        akoCandidates.sort((a, b) => b.prob - a.prob);
         const topAko2 = [...new Map(akoCandidates.map(c => [c.match, c])).values()].slice(0, 4);
         if (topAko2.length >= 2) {
           let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
-          topAko2.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (Edge: +${c.edge}%)\n`; });
+          topAko2.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (${c.prob}% statystycznie)\n`; });
           akoText += "💸 Postaw jako AKO dla większego zysku!\n";
           if (cr.length + akoText.length > 1900) { payloads.push(cr); cr = akoText; } else cr += akoText;
         }
