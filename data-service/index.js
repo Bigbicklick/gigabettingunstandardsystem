@@ -114,6 +114,7 @@ async function initDB() {
         odds_spread_away DECIMAL,
         odds_totals_over DECIMAL,
         odds_totals_under DECIMAL,
+        totals_point DECIMAL,
         ai_forecast VARCHAR(50) DEFAULT NULL,
         ai_edge DECIMAL DEFAULT NULL,
         ai_probability DECIMAL DEFAULT NULL,
@@ -122,6 +123,7 @@ async function initDB() {
     `);
 
     await client.query(`ALTER TABLE matches_basket ADD COLUMN IF NOT EXISTS ai_probability DECIMAL DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches_basket ADD COLUMN IF NOT EXISTS totals_point DECIMAL DEFAULT NULL;`);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS matches_tennis (
@@ -419,7 +421,7 @@ async function fetchUpcomingBasketballMatches() {
       
       let oddsHome = null, oddsAway = null;
       let spreadHome = null, spreadAway = null;
-      let totalsOver = null, totalsUnder = null;
+      let totalsOver = null, totalsUnder = null, totalsPoint = null;
 
       if (match.bookmakers && match.bookmakers.length > 0) {
         const bm = match.bookmakers[0];
@@ -444,7 +446,7 @@ async function fetchUpcomingBasketballMatches() {
         if (totalsMarket && totalsMarket.outcomes) {
            const overOut = totalsMarket.outcomes.find(o => o.name === 'Over');
            const underOut = totalsMarket.outcomes.find(o => o.name === 'Under');
-           if (overOut) totalsOver = overOut.price;
+           if (overOut) { totalsOver = overOut.price; totalsPoint = overOut.point ?? null; }
            if (underOut) totalsUnder = underOut.price;
         }
       }
@@ -456,18 +458,19 @@ async function fetchUpcomingBasketballMatches() {
           INSERT INTO matches_basket (
             fixture_id, league_name, home_team, away_team, date, 
             status, odds_home, odds_away, odds_spread_home, odds_spread_away, 
-            odds_totals_over, odds_totals_under
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            odds_totals_over, odds_totals_under, totals_point
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
           ON CONFLICT (fixture_id) DO UPDATE SET
             odds_home = EXCLUDED.odds_home,
             odds_away = EXCLUDED.odds_away,
             odds_spread_home = EXCLUDED.odds_spread_home,
             odds_spread_away = EXCLUDED.odds_spread_away,
             odds_totals_over = EXCLUDED.odds_totals_over,
-            odds_totals_under = EXCLUDED.odds_totals_under
+            odds_totals_under = EXCLUDED.odds_totals_under,
+            totals_point = EXCLUDED.totals_point
         `, [
           `nba_${match.id}`, 'NBA', match.home_team, match.away_team, match.commence_time, 
-          'NS', oddsHome, oddsAway, spreadHome, spreadAway, totalsOver, totalsUnder
+          'NS', oddsHome, oddsAway, spreadHome, spreadAway, totalsOver, totalsUnder, totalsPoint
         ]);
         savedCount++;
       } catch (dbErr) {

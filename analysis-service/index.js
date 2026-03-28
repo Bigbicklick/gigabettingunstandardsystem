@@ -255,7 +255,7 @@ discordClient.on('messageCreate', async (message) => {
           SELECT home_team, away_team, date, league_name,
                  odds_home, odds_away,
                  odds_spread_home, odds_spread_away,
-                 odds_totals_over, odds_totals_under,
+                 odds_totals_over, odds_totals_under, totals_point,
                  ai_forecast, ai_edge, ai_probability
           FROM matches_basket
           WHERE date > NOW() AND date < NOW() + INTERVAL '72 hours'
@@ -301,8 +301,10 @@ discordClient.on('messageCreate', async (message) => {
           chunk += `> 💰 Kursy: ${fmtOdds(m.odds_home)} / ${fmtOdds(m.odds_away)}\n`;
           if (m.odds_spread_home && m.odds_spread_away)
             chunk += `> 📊 Spread: ${fmtOdds(m.odds_spread_home)} / ${fmtOdds(m.odds_spread_away)}\n`;
-          if (m.odds_totals_over && m.odds_totals_under)
-            chunk += `> 🥅 Totals: Over ${fmtOdds(m.odds_totals_over)} / Under ${fmtOdds(m.odds_totals_under)}\n`;
+          if (m.odds_totals_over && m.odds_totals_under) {
+            const tpLine = m.totals_point ? ` **O/U ${parseFloat(m.totals_point)}**` : '';
+            chunk += `> 🥅 Totals:${tpLine} — Over ${fmtOdds(m.odds_totals_over)} / Under ${fmtOdds(m.odds_totals_under)}\n`;
+          }
 
           if (m.ai_forecast) {
             const edge = parseFloat(m.ai_edge) || 0;
@@ -318,10 +320,11 @@ discordClient.on('messageCreate', async (message) => {
             const winStr = winPct !== null ? ` — **${winPct}%**` : '';
             chunk += `> ${sourceLabel}: **${m.ai_forecast}** wygra${winStr} szans statystycznie\n`;
 
-            // Totals O/U with %
+            // Totals O/U with % and line
             if (m.odds_totals_over && m.odds_totals_under) {
               const totP = fairProb2(m.odds_totals_over, m.odds_totals_under);
-              if (totP) chunk += `> 🏹 Totals O/U: Over ${totP[0]}% / Under ${totP[1]}%\n`;
+              const tpLine = m.totals_point ? `O/U **${parseFloat(m.totals_point)}** — ` : '';
+              if (totP) chunk += `> 🏹 Totals: ${tpLine}Over ${totP[0]}% / Under ${totP[1]}%\n`;
             }
 
             // Recommendation based purely on statistical probability
@@ -949,18 +952,30 @@ async function sendDailyCoupon() {
     // Fetch top picks across all sports for the next 36h, probability >= 58%
     const rows = [];
 
+    // CONSENSUS FILTER: prob >= 65% AND (odds <= 2.5 OR prob >= 72%)
+    // This ensures bookmaker also rates the pick as likely, reducing false positives
     const foot = await client.query(`
       SELECT 'football' AS sport, home_team, away_team, ai_forecast AS winner, ai_probability AS prob,
              CASE WHEN ai_forecast = home_team THEN odds_home ELSE odds_away END AS odds, date, league_name
       FROM matches WHERE date > NOW() AND date < NOW() + INTERVAL '36 hours'
-      AND ai_probability >= 58 AND ai_forecast IS NOT NULL ORDER BY ai_probability DESC LIMIT 4`);
+      AND ai_probability >= 65 AND ai_forecast IS NOT NULL
+      AND (
+        (CASE WHEN ai_forecast = home_team THEN odds_home ELSE odds_away END) <= 2.5
+        OR ai_probability >= 72
+      )
+      ORDER BY ai_probability DESC LIMIT 3`);
     rows.push(...foot.rows);
 
     const bask = await client.query(`
       SELECT 'basket' AS sport, home_team, away_team, ai_forecast AS winner, ai_probability AS prob,
              CASE WHEN ai_forecast = home_team THEN odds_home ELSE odds_away END AS odds, date, league_name
       FROM matches_basket WHERE date > NOW() AND date < NOW() + INTERVAL '36 hours'
-      AND ai_probability >= 58 AND ai_forecast IS NOT NULL ORDER BY ai_probability DESC LIMIT 4`);
+      AND ai_probability >= 65 AND ai_forecast IS NOT NULL
+      AND (
+        (CASE WHEN ai_forecast = home_team THEN odds_home ELSE odds_away END) <= 2.5
+        OR ai_probability >= 72
+      )
+      ORDER BY ai_probability DESC LIMIT 4`);
     rows.push(...bask.rows);
 
     const esp = await client.query(`
@@ -969,7 +984,8 @@ async function sendDailyCoupon() {
              ai_probability AS prob,
              CASE WHEN ai_forecast='Home Win' THEN odds_home ELSE odds_away END AS odds, date, league_name
       FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '36 hours'
-      AND ai_probability >= 58 AND ai_forecast IS NOT NULL ORDER BY ai_probability DESC LIMIT 3`);
+      AND ai_probability >= 70 AND ai_forecast IS NOT NULL
+      ORDER BY ai_probability DESC LIMIT 3`);
     rows.push(...esp.rows);
 
     // Sort all by prob desc, take top 6
