@@ -9,6 +9,27 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/bettingdb';
 
+// Kelly Criterion: returns optimal stake % of bankroll (capped at 20%, null if no edge)
+function calcKelly(prob, odds) {
+  if (!prob || !odds || odds <= 1.0) return null;
+  const b = parseFloat(odds) - 1;
+  const p = parseFloat(prob) / 100;
+  const f = (b * p - (1 - p)) / b;
+  if (f <= 0) return null;
+  return Math.round(Math.min(f * 100, 20) * 10) / 10; // cap 20%, 1 decimal
+}
+
+async function logPrediction(client, sport, fixtureId, homeTeam, awayTeam, winner, prob, odds, dateMatch) {
+  try {
+    const kelly = calcKelly(prob, odds);
+    await client.query(`
+      INSERT INTO predictions_history (sport, fixture_id, home_team, away_team, predicted_winner, predicted_prob, predicted_odds, kelly_stake, date_match)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT (fixture_id, sport) DO NOTHING
+    `, [sport, fixtureId, homeTeam, awayTeam, winner, prob, odds, kelly, dateMatch]);
+  } catch(e) { /* non-critical */ }
+}
+
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -174,12 +195,15 @@ discordClient.on('messageCreate', async (message) => {
             if (m.ai_dnb_forecast) chunk += `> ⚖️ DNB: **${m.ai_dnb_forecast}**\n`;
 
             // Recommendation based purely on statistical probability
+            const pickedOdds = (m.ai_forecast === m.home_team || m.ai_forecast === 'Home Win') ? m.odds_home : m.odds_away;
+            const kelly = winPct ? calcKelly(winPct, pickedOdds) : null;
+            const kellyStr = kelly ? ` | 🎯 Kelly: **${kelly}% bankrolla**` : '';
             if (winPct !== null && winPct >= 65) {
-              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — model pewny (${winPct}%) 🔥\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — ${winPct}% szans${kellyStr} 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct, kelly, odds: pickedOdds });
             } else if (winPct !== null && winPct >= 58) {
-              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** (${winPct}%)\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** — ${winPct}%${kellyStr}\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct, kelly, odds: pickedOdds });
             } else {
               chunk += `> ℹ️ Brak pewnej prognozy (${winPct !== null ? winPct + '%' : 'brak danych'})\n`;
             }
@@ -202,7 +226,8 @@ discordClient.on('messageCreate', async (message) => {
         if (topAko.length >= 2) {
           let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
           topAko.forEach((c, i) => {
-            akoText += `${i + 1}. ${c.match} → **${c.pick}** (${c.prob}% statystycznie)\n`;
+            const ks = c.kelly ? ` (Kelly: ${c.kelly}%)` : '';
+            akoText += `${i + 1}. ${c.match} → **${c.pick}** — ${c.prob}%${ks}\n`;
           });
           akoText += "💸 Postaw jako AKO dla większego zysku!\n";
           if (currentReport.length + akoText.length > 1900) {
@@ -300,12 +325,15 @@ discordClient.on('messageCreate', async (message) => {
             }
 
             // Recommendation based purely on statistical probability
+            const pickedOddsB = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
+            const kellyB = winPct ? calcKelly(winPct, pickedOddsB) : null;
+            const kellyStrB = kellyB ? ` | 🎯 Kelly: **${kellyB}% bankrolla**` : '';
             if (winPct !== null && winPct >= 65) {
-              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — model pewny (${winPct}%) 🔥\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — ${winPct}% szans${kellyStrB} 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct, kelly: kellyB, odds: pickedOddsB });
             } else if (winPct !== null && winPct >= 58) {
-              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** (${winPct}%)\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** — ${winPct}%${kellyStrB}\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct, kelly: kellyB, odds: pickedOddsB });
             } else {
               chunk += `> ℹ️ Brak pewnej prognozy (${winPct !== null ? winPct + '%' : 'brak danych'})\n`;
             }
@@ -327,7 +355,10 @@ discordClient.on('messageCreate', async (message) => {
         const topAko = [...new Map(akoCandidates.map(c => [c.match, c])).values()].slice(0, 4);
         if (topAko.length >= 2) {
           let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
-          topAko.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (${c.prob}% statystycznie)\n`; });
+          topAko.forEach((c, i) => {
+            const ks = c.kelly ? ` (Kelly: ${c.kelly}%)` : '';
+            akoText += `${i+1}. ${c.match} → **${c.pick}** — ${c.prob}%${ks}\n`;
+          });
           akoText += "💸 Postaw jako AKO dla większego zysku!\n";
           if (currentReport.length + akoText.length > 1900) { payloads.push(currentReport); currentReport = akoText; }
           else currentReport += akoText;
@@ -397,12 +428,15 @@ discordClient.on('messageCreate', async (message) => {
             const srcLabel = (m.ai_probability && parseFloat(m.ai_probability) > 0) ? '🧠 ML AI' : '📊 Kursowe AI';
             const winStr = winPct !== null ? ` — **${winPct}%**` : '';
             chunk += `> ${srcLabel}: **${m.ai_forecast}** wygra${winStr} szans statystycznie\n`;
+            const pickedOddsT = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
+            const kellyT = winPct ? calcKelly(winPct, pickedOddsT) : null;
+            const kellyStrT = kellyT ? ` | 🎯 Kelly: **${kellyT}% bankrolla**` : '';
             if (winPct !== null && winPct >= 65) {
-              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — model pewny (${winPct}%) 🔥\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — ${winPct}% szans${kellyStrT} 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct, kelly: kellyT, odds: pickedOddsT });
             } else if (winPct !== null && winPct >= 58) {
-              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** (${winPct}%)\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct });
+              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** — ${winPct}%${kellyStrT}\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct, kelly: kellyT, odds: pickedOddsT });
             } else {
               chunk += `> ℹ️ Brak pewnej prognozy (${winPct !== null ? winPct + '%' : 'brak danych'})\n`;
             }
@@ -417,7 +451,10 @@ discordClient.on('messageCreate', async (message) => {
         const topAko = [...new Map(akoCandidates.map(c => [c.match, c])).values()].slice(0, 4);
         if (topAko.length >= 2) {
           let akoText = "\n🎟️ **SUGEROWANY KUPON AKO** 🎟️\n";
-          topAko.forEach((c, i) => { akoText += `${i+1}. ${c.match} → **${c.pick}** (${c.prob}% statystycznie)\n`; });
+          topAko.forEach((c, i) => {
+            const ks = c.kelly ? ` (Kelly: ${c.kelly}%)` : '';
+            akoText += `${i+1}. ${c.match} → **${c.pick}** — ${c.prob}%${ks}\n`;
+          });
           akoText += "💸 Postaw jako AKO dla większego zysku!\n";
           if (cr.length + akoText.length > 1900) { payloads.push(cr); cr = akoText; } else cr += akoText;
         }
@@ -486,12 +523,15 @@ discordClient.on('messageCreate', async (message) => {
             const srcLabel = hasOdds ? '🧠 ML AI' : '📊 Forma AI';
             const winStr = winPct !== null ? ` — **${winPct}%**` : '';
             chunk += `> ${srcLabel}: **${winner}** wygra${winStr} szans statystycznie\n`;
+            const pickedOddsE = winner === m.home_team ? m.odds_home : m.odds_away;
+            const kellyE = winPct ? calcKelly(winPct, pickedOddsE) : null;
+            const kellyStrE = kellyE ? ` | 🎯 Kelly: **${kellyE}% bankrolla**` : '';
             if (winPct !== null && winPct >= 65) {
-              chunk += `> ✅ **GRAMY: ${winner}** — model pewny (${winPct}%) 🔥\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: winner, prob: winPct });
+              chunk += `> ✅ **GRAMY: ${winner}** — ${winPct}% szans${kellyStrE} 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: winner, prob: winPct, kelly: kellyE, odds: pickedOddsE });
             } else if (winPct !== null && winPct >= 58) {
-              chunk += `> ✅ Warto rozważyć: **${winner}** (${winPct}%)\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: winner, prob: winPct });
+              chunk += `> ✅ Warto rozważyć: **${winner}** — ${winPct}%${kellyStrE}\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: winner, prob: winPct, kelly: kellyE, odds: pickedOddsE });
             } else if (!hasOdds) {
               chunk += `> ℹ️ Predykcja z formy — brak kursów bukmachera\n`;
             } else {
@@ -519,6 +559,37 @@ discordClient.on('messageCreate', async (message) => {
         console.error(e);
         return message.reply("Wystąpił błąd DB dla Esportu.");
      } finally { pgClient.release(); }
+
+  } else if (message.content === 'statsai') {
+    const pgClient = await pool.connect();
+    try {
+      const r = await pgClient.query(`
+        SELECT sport,
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE resolved = true) AS resolved,
+          COUNT(*) FILTER (WHERE is_correct = true) AS correct,
+          ROUND(AVG(predicted_prob),1) AS avg_prob,
+          ROUND(AVG(kelly_stake),1) AS avg_kelly
+        FROM predictions_history
+        GROUP BY sport ORDER BY sport
+      `);
+      if (r.rows.length === 0) return message.reply('ℹ️ Brak historii prognoz. Poczekaj aż bot przeanalizuje kilka meczów.');
+
+      let msg = '📊 **SKUTECZNOŚĆ AI — STATYSTYKI**\n\n';
+      for (const row of r.rows) {
+        const sportIcon = { basket: '🏀', esport: '🎮', football: '⚽', tennis: '🎾' }[row.sport] || '🔮';
+        const hitRate = row.resolved > 0 ? `${Math.round(row.correct / row.resolved * 100)}% (${row.correct}/${row.resolved})` : 'brak danych';
+        msg += `${sportIcon} **${row.sport.toUpperCase()}**\n`;
+        msg += `> 📈 Prognoz: **${row.total}** | Zweryfikowanych: **${row.resolved}**\n`;
+        msg += `> ✅ Trafność: **${hitRate}**\n`;
+        msg += `> 🎯 Śr. pewność modelu: **${row.avg_prob}%** | Śr. Kelly: **${row.avg_kelly}%**\n\n`;
+      }
+      msg += '_Wyniki są aktualizowane automatycznie po zakończeniu meczów._';
+      await message.reply(msg);
+    } catch(e) {
+      console.error(e);
+      return message.reply('Błąd pobierania statystyk.');
+    } finally { pgClient.release(); }
   }
 });
 
@@ -767,7 +838,12 @@ async function analyzeUpcomingBasketMatches() {
           prediction.model_probability,
           match.fixture_id
         ]);
-        
+
+        const winnerIsHome = prediction.recommended_bet === match.home_team;
+        const pickedOdds = winnerIsHome ? match.odds_home : match.odds_away;
+        await logPrediction(client, 'basket', match.fixture_id, match.home_team, match.away_team,
+          prediction.recommended_bet, prediction.model_probability, pickedOdds, match.date);
+
       } catch (aiError) {
         console.error(`Error analyzing NBA match ${match.fixture_id}:`, aiError.message);
       }
@@ -851,6 +927,11 @@ async function analyzeUpcomingEsportsMatches() {
           `UPDATE matches_esport SET sent_to_discord = true, ai_forecast = $1, ai_edge = $2, ai_probability = $3 WHERE fixture_id = $4`,
           [forecast, edge, prob, match.fixture_id]
         );
+
+        const eWinner = forecast === 'Home Win' ? match.home_team : match.away_team;
+        const eOdds = forecast === 'Home Win' ? oH : oA;
+        await logPrediction(client, 'esport', match.fixture_id, match.home_team, match.away_team,
+          eWinner, prob, eOdds, match.date);
       } catch (e) {
         console.error(`Esport analyze error for ${match.home_team} vs ${match.away_team}: ${e.message}`);
       }
@@ -859,6 +940,76 @@ async function analyzeUpcomingEsportsMatches() {
   } catch (e) {
     console.error('Error in analyzeUpcomingEsportsMatches:', e.message);
   } finally { client.release(); }
+}
+
+async function sendDailyCoupon() {
+  if (!DISCORD_WEBHOOK_URL) return;
+  const client = await pool.connect();
+  try {
+    // Fetch top picks across all sports for the next 36h, probability >= 58%
+    const rows = [];
+
+    const foot = await client.query(`
+      SELECT 'football' AS sport, home_team, away_team, ai_forecast AS winner, ai_probability AS prob,
+             CASE WHEN ai_forecast = home_team THEN odds_home ELSE odds_away END AS odds, date, league_name
+      FROM matches WHERE date > NOW() AND date < NOW() + INTERVAL '36 hours'
+      AND ai_probability >= 58 AND ai_forecast IS NOT NULL ORDER BY ai_probability DESC LIMIT 4`);
+    rows.push(...foot.rows);
+
+    const bask = await client.query(`
+      SELECT 'basket' AS sport, home_team, away_team, ai_forecast AS winner, ai_probability AS prob,
+             CASE WHEN ai_forecast = home_team THEN odds_home ELSE odds_away END AS odds, date, league_name
+      FROM matches_basket WHERE date > NOW() AND date < NOW() + INTERVAL '36 hours'
+      AND ai_probability >= 58 AND ai_forecast IS NOT NULL ORDER BY ai_probability DESC LIMIT 4`);
+    rows.push(...bask.rows);
+
+    const esp = await client.query(`
+      SELECT 'esport' AS sport, home_team, away_team,
+             CASE WHEN ai_forecast='Home Win' THEN home_team ELSE away_team END AS winner,
+             ai_probability AS prob,
+             CASE WHEN ai_forecast='Home Win' THEN odds_home ELSE odds_away END AS odds, date, league_name
+      FROM matches_esport WHERE date > NOW() AND date < NOW() + INTERVAL '36 hours'
+      AND ai_probability >= 58 AND ai_forecast IS NOT NULL ORDER BY ai_probability DESC LIMIT 3`);
+    rows.push(...esp.rows);
+
+    // Sort all by prob desc, take top 6
+    rows.sort((a, b) => parseFloat(b.prob) - parseFloat(a.prob));
+    const top = rows.slice(0, 6);
+
+    if (top.length === 0) {
+      await axios.post(DISCORD_WEBHOOK_URL, { content: '🎟️ **KUPON NA DZIŚ/NOC** 🎟️\nBrak meczów z wystarczającą pewnością modelu (>58%) w najbliższych 36h. Wróć jutro!' });
+      return;
+    }
+
+    const sportIcon = { football: '⚽', basket: '🏀', esport: '🎮', tennis: '🎾' };
+    let msg = '🎟️ **KUPON NA DZIŚ/NOC — AI PICKS** 🎟️\n';
+    msg += `📅 ${new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: '2-digit', month: '2-digit' })} | Top typów na najbliższe 36h\n\n`;
+
+    let totalKelly = 0;
+    for (const m of top) {
+      const dt = new Date(m.date);
+      const timeStr = dt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+      const prob = Math.round(parseFloat(m.prob));
+      const odds = m.odds ? parseFloat(m.odds).toFixed(2) : '-';
+      const kelly = m.odds ? calcKelly(prob, parseFloat(m.odds)) : null;
+      const kellyStr = kelly ? ` | Kelly: **${kelly}%**` : '';
+      totalKelly += kelly || 0;
+      msg += `${sportIcon[m.sport] || '🔮'} **${m.winner}** _(${m.home_team} vs ${m.away_team})_\n`;
+      msg += `> ⏰ ${timeStr}${m.league_name ? ` | ${m.league_name}` : ''} | Kurs: **${odds}** | **${prob}% szans**${kellyStr}\n\n`;
+    }
+
+    msg += `───────────────────\n`;
+    msg += `📊 Łącznie **${top.length}** typów | Śr. pewność: **${Math.round(top.reduce((s,r)=>s+parseFloat(r.prob),0)/top.length)}%**\n`;
+    if (totalKelly > 0) msg += `🎯 Śr. Kelly stake: **${Math.round(totalKelly/top.length * 10)/10}% bankrolla** na każdy typ\n`;
+    msg += `\n⚠️ _Typuj odpowiedzialnie. AI to narzędzie, nie gwarancja._`;
+
+    await axios.post(DISCORD_WEBHOOK_URL, { content: msg });
+    console.log('Sent daily coupon to Discord.');
+  } catch (err) {
+    console.error('Error sending daily coupon:', err.message);
+  } finally {
+    client.release();
+  }
 }
 
 function start() {
@@ -878,7 +1029,10 @@ function start() {
     analyzeUpcomingEsportsMatches();
   });
 
-  console.log('Analysis service scheduled to run every 10 minutes (Signals).');
+  // Daily coupon at 20:00 (Europe/Warsaw = UTC+1/+2)
+  cron.schedule('0 19 * * *', () => { sendDailyCoupon(); }, { timezone: 'Europe/Warsaw' });
+
+  console.log('Analysis service scheduled to run every 10 minutes (Signals) + daily coupon at 20:00.');
 }
 
 start();

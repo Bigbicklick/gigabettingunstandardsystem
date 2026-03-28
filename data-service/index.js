@@ -161,6 +161,26 @@ async function initDB() {
     await client.query(`ALTER TABLE matches_esport ADD COLUMN IF NOT EXISTS ai_probability DECIMAL DEFAULT NULL;`);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS predictions_history (
+        id SERIAL PRIMARY KEY,
+        sport VARCHAR(20) NOT NULL,
+        fixture_id VARCHAR(100) NOT NULL,
+        home_team VARCHAR(200),
+        away_team VARCHAR(200),
+        predicted_winner VARCHAR(200),
+        predicted_prob DECIMAL(5,2),
+        predicted_odds DECIMAL(10,2),
+        kelly_stake DECIMAL(5,2),
+        date_match TIMESTAMP,
+        date_predicted TIMESTAMP DEFAULT NOW(),
+        actual_result VARCHAR(200),
+        is_correct BOOLEAN,
+        resolved BOOLEAN DEFAULT FALSE,
+        UNIQUE(fixture_id, sport)
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS team_stats_esport (
         team_name VARCHAR(200) PRIMARY KEY,
         wins INTEGER DEFAULT 0,
