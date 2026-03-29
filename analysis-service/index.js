@@ -575,7 +575,8 @@ discordClient.on('messageCreate', async (message) => {
           COUNT(*) FILTER (WHERE resolved = true) AS resolved,
           COUNT(*) FILTER (WHERE is_correct = true) AS correct,
           ROUND(AVG(predicted_prob),1) AS avg_prob,
-          ROUND(AVG(kelly_stake),1) AS avg_kelly
+          ROUND(AVG(kelly_stake),1) AS avg_kelly,
+          ROUND(AVG(clv) FILTER (WHERE clv IS NOT NULL),2) AS avg_clv
         FROM predictions_history
         GROUP BY sport ORDER BY sport
       `);
@@ -586,8 +587,9 @@ discordClient.on('messageCreate', async (message) => {
         const sportIcon = { basket: '🏀', esport: '🎮', football: '⚽', tennis: '🎾' }[row.sport] || '🔮';
         const hitRate = row.resolved > 0 ? `${Math.round(row.correct / row.resolved * 100)}% (${row.correct}/${row.resolved})` : 'brak danych';
         msg += `${sportIcon} **${row.sport.toUpperCase()}**\n`;
+        const clvStr = row.avg_clv !== null ? ` | CLV: **${row.avg_clv > 0 ? '+' : ''}${row.avg_clv}%**` : '';
         msg += `> 📈 Prognoz: **${row.total}** | Zweryfikowanych: **${row.resolved}**\n`;
-        msg += `> ✅ Trafność: **${hitRate}**\n`;
+        msg += `> ✅ Trafność: **${hitRate}**${clvStr}\n`;
         msg += `> 🎯 Śr. pewność modelu: **${row.avg_prob}%** | Śr. Kelly: **${row.avg_kelly}%**\n\n`;
       }
       msg += '_Wyniki są aktualizowane automatycznie po zakończeniu meczów._';
@@ -595,6 +597,189 @@ discordClient.on('messageCreate', async (message) => {
     } catch(e) {
       console.error(e);
       return message.reply('Błąd pobierania statystyk.');
+    } finally { pgClient.release(); }
+
+  } else if (message.content.startsWith('propsy')) {
+    const pgClient = await pool.connect();
+    try {
+      const markets = { player_points: 'Punkty', player_rebounds: 'Zbiórki', player_assists: 'Asysty' };
+      const r = await pgClient.query(`
+        SELECT pp.player_name, pp.market, pp.line, pp.odds_over, pp.odds_under, pp.ai_pick, pp.ai_probability,
+               mb.home_team, mb.away_team, pp.match_date
+        FROM player_props_basket pp
+        JOIN matches_basket mb ON mb.fixture_id = pp.fixture_id
+        WHERE pp.match_date > NOW() AND pp.match_date < NOW() + INTERVAL '36 hours'
+        ORDER BY pp.match_date ASC, pp.ai_probability DESC
+        LIMIT 30
+      `);
+      if (r.rows.length === 0) {
+        return message.reply('ℹ️ Brak propsów NBA na najbliższe 36h. Dane odświeżają się co 8h — spróbuj później.');
+      }
+
+      // Group by match
+      const grouped = {};
+      for (const row of r.rows) {
+        const key = `${row.home_team} vs ${row.away_team}`;
+        if (!grouped[key]) grouped[key] = { date: row.match_date, props: [] };
+        grouped[key].props.push(row);
+      }
+
+      let payloads = [], cr = '🏀 **PROPSY NBA — AI PICKS**\n\n';
+      for (const [matchKey, data] of Object.entries(grouped)) {
+        const dt = new Date(data.date);
+        const timeStr = dt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+        let chunk = `**${matchKey}** — ⏰ ${timeStr}\n`;
+        for (const p of data.props) {
+          const mktLabel = markets[p.market] || p.market;
+          const edge = p.ai_pick === 'Over' ? parseFloat(p.odds_over) : parseFloat(p.odds_under);
+          const flag = parseFloat(p.ai_probability) >= 55 ? '✅' : '🔹';
+          chunk += `> ${flag} **${p.player_name}** — ${mktLabel} ${p.ai_pick} **${p.line}** @ ${parseFloat(edge).toFixed(2)} _(${p.ai_probability}%)_\n`;
+        }
+        chunk += '\n';
+        if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
+      }
+      if (cr.trim()) payloads.push(cr);
+      for (const p of payloads) await message.reply(p);
+    } catch(e) {
+      console.error(e);
+      return message.reply('Błąd pobierania propsów NBA.');
+    } finally { pgClient.release(); }
+
+  } else if (message.content.match(/^zakładam\s+(\d+(?:\.\d+)?)\s+na\s+(.+)$/i)) {
+    const m = message.content.match(/^zakładam\s+(\d+(?:\.\d+)?)\s+na\s+(.+)$/i);
+    const stake = parseFloat(m[1]);
+    const pickRaw = m[2].trim();
+    const userId = message.author.id;
+    const username = message.author.username;
+
+    if (stake < 1 || stake > 5000) return message.reply('❌ Stawka musi być między 1 a 5000 wirtualnych 💰.');
+
+    const pgClient = await pool.connect();
+    try {
+      // Init bankroll if new user
+      await pgClient.query(`
+        INSERT INTO virtual_bankroll (user_id, username, balance) VALUES ($1,$2,1000)
+        ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username
+      `, [userId, username]);
+
+      const bal = await pgClient.query(`SELECT balance FROM virtual_bankroll WHERE user_id=$1`, [userId]);
+      const balance = parseFloat(bal.rows[0].balance);
+      if (stake > balance) return message.reply(`❌ Nie masz wystarczająco środków! Twój balans: **${balance.toFixed(0)} 💰**`);
+
+      // Find matching AI pick from upcoming matches (across all sports)
+      const pickLower = pickRaw.toLowerCase();
+      const upcoming = await pgClient.query(`
+        SELECT 'basket' sport, fixture_id, home_team, away_team,
+               CASE WHEN ai_forecast='Home Win' THEN home_team ELSE away_team END AS winner,
+               CASE WHEN ai_forecast='Home Win' THEN odds_home ELSE odds_away END AS odds,
+               date
+        FROM matches_basket WHERE date > NOW() AND ai_forecast IS NOT NULL
+        UNION ALL
+        SELECT 'football', fixture_id, home_team, away_team, ai_forecast, odds_home, date
+        FROM matches WHERE date > NOW() AND ai_forecast IS NOT NULL
+        UNION ALL
+        SELECT 'esport', fixture_id, home_team, away_team,
+               CASE WHEN ai_forecast='Home Win' THEN home_team ELSE away_team END,
+               CASE WHEN ai_forecast='Home Win' THEN odds_home ELSE odds_away END, date
+        FROM matches_esport WHERE date > NOW() AND ai_forecast IS NOT NULL
+      `);
+
+      const matched = upcoming.rows.find(r =>
+        r.winner && r.winner.toLowerCase().includes(pickLower) ||
+        r.home_team.toLowerCase().includes(pickLower) ||
+        r.away_team.toLowerCase().includes(pickLower)
+      );
+
+      if (!matched) {
+        return message.reply(`❌ Nie znalazłem meczu z typem "**${pickRaw}**". Sprawdź betsbasket/betsfoot i wpisz nazwę drużyny.`);
+      }
+
+      const odds = parseFloat(matched.odds) || 1.9;
+      const potentialWin = parseFloat((stake * odds).toFixed(2));
+
+      await pgClient.query(`
+        INSERT INTO virtual_bets (user_id, username, fixture_id, sport, pick, odds, stake, potential_win)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `, [userId, username, matched.fixture_id, matched.sport, matched.winner, odds, stake, potentialWin]);
+
+      await pgClient.query(`UPDATE virtual_bankroll SET balance = balance - $1, total_bets = total_bets+1, updated_at=NOW() WHERE user_id=$2`, [stake, userId]);
+
+      const dt = new Date(matched.date);
+      const timeStr = dt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+      await message.reply(
+        `✅ **Zakład przyjęty!**\n` +
+        `> 🏆 **${matched.winner}** @ **${odds.toFixed(2)}** — stawka: **${stake} 💰**\n` +
+        `> 💎 Potencjalna wygrana: **${potentialWin} 💰**\n` +
+        `> ⏰ Mecz: ${matched.home_team} vs ${matched.away_team} o ${timeStr}\n` +
+        `> 💳 Pozostały balans: **${(balance - stake).toFixed(0)} 💰**`
+      );
+    } catch(e) {
+      console.error(e);
+      return message.reply('Błąd rejestrowania zakładu.');
+    } finally { pgClient.release(); }
+
+  } else if (message.content === 'moj_profil') {
+    const userId = message.author.id;
+    const pgClient = await pool.connect();
+    try {
+      const brRes = await pgClient.query(`SELECT * FROM virtual_bankroll WHERE user_id=$1`, [userId]);
+      if (brRes.rows.length === 0) {
+        return message.reply('ℹ️ Nie masz jeszcze konta! Zacznij od **zakładam <kwota> na <drużyna>**. Dostajesz **1000 💰 startowego bankrolla**!');
+      }
+      const br = brRes.rows[0];
+      const bets = await pgClient.query(`
+        SELECT pick, sport, odds, stake, potential_win, status, is_correct, profit, placed_at
+        FROM virtual_bets WHERE user_id=$1 ORDER BY placed_at DESC LIMIT 10
+      `, [userId]);
+
+      const profit = parseFloat(br.balance) - 1000;
+      const roi = br.total_bets > 0 ? ((profit / (br.total_bets * 100)) * 100).toFixed(1) : '0.0';
+      const hitRate = (br.wins + br.losses) > 0 ? Math.round(br.wins / (br.wins + br.losses) * 100) : 0;
+
+      let msg = `🏦 **TWÓJ PROFIL — ${br.username}**\n\n`;
+      msg += `> 💰 Balans: **${parseFloat(br.balance).toFixed(0)} / 1000** startowych\n`;
+      msg += `> 📈 Profit: **${profit >= 0 ? '+' : ''}${profit.toFixed(0)} 💰** | ROI: **${roi}%**\n`;
+      msg += `> ✅ Trafność: **${hitRate}%** (${br.wins}W / ${br.losses}L / ${br.total_bets - br.wins - br.losses} oczekuje)\n\n`;
+
+      if (bets.rows.length > 0) {
+        msg += `**Ostatnie zakłady:**\n`;
+        for (const b of bets.rows.slice(0, 5)) {
+          const icon = b.status === 'pending' ? '⏳' : b.is_correct ? '✅' : '❌';
+          const profitStr = b.profit !== null ? ` (${b.profit > 0 ? '+' : ''}${parseFloat(b.profit).toFixed(0)})` : '';
+          msg += `> ${icon} **${b.pick}** @ ${parseFloat(b.odds).toFixed(2)} — ${parseFloat(b.stake).toFixed(0)}💰${profitStr}\n`;
+        }
+      }
+      await message.reply(msg);
+    } catch(e) {
+      console.error(e);
+      return message.reply('Błąd pobierania profilu.');
+    } finally { pgClient.release(); }
+
+  } else if (message.content === 'top') {
+    const pgClient = await pool.connect();
+    try {
+      const r = await pgClient.query(`
+        SELECT username, balance, wins, losses, total_bets,
+               ROUND(balance - 1000, 0) AS profit,
+               CASE WHEN (wins+losses)>0 THEN ROUND(wins::decimal/(wins+losses)*100,0) ELSE 0 END AS hit_rate
+        FROM virtual_bankroll
+        WHERE total_bets > 0
+        ORDER BY balance DESC LIMIT 10
+      `);
+      if (r.rows.length === 0) return message.reply('ℹ️ Nikt jeszcze nie obstawił! Wpisz **zakładam 100 na <drużyna>** żeby zacząć.');
+
+      let msg = '🏆 **RANKING TYPERÓW — WIRTUALNY BANKROLL**\n\n';
+      for (let i = 0; i < r.rows.length; i++) {
+        const row = r.rows[i];
+        const medal = ['🥇', '🥈', '🥉'][i] || `**${i+1}.**`;
+        const profitStr = row.profit >= 0 ? `+${row.profit}💰` : `${row.profit}💰`;
+        msg += `${medal} **${row.username}** — ${parseFloat(row.balance).toFixed(0)}💰 (${profitStr}) | ${row.hit_rate}% trafność | ${row.total_bets} typów\n`;
+      }
+      msg += `\n_Zdobądź startowe 1000💰 wpisując: **zakładam 100 na <drużyna>**_`;
+      await message.reply(msg);
+    } catch(e) {
+      console.error(e);
+      return message.reply('Błąd pobierania rankingu.');
     } finally { pgClient.release(); }
   }
 });
@@ -948,6 +1133,120 @@ async function analyzeUpcomingEsportsMatches() {
   } finally { client.release(); }
 }
 
+async function sendMatchStartAlerts() {
+  if (!DISCORD_WEBHOOK_URL) return;
+  const client = await pool.connect();
+  try {
+    // Find matches starting in 25-35 minutes
+    const res = await client.query(`
+      SELECT sport, home_team, away_team, date, ai_forecast, ai_probability,
+             CASE WHEN sport='basket' THEN
+               CASE WHEN ai_forecast='Home Win' THEN odds_home ELSE odds_away END
+             ELSE odds_home END AS picked_odds
+      FROM (
+        SELECT 'football' sport, home_team, away_team, date, ai_forecast, ai_probability, odds_home, NULL::decimal odds_away
+        FROM matches WHERE date BETWEEN NOW() + INTERVAL '25 minutes' AND NOW() + INTERVAL '35 minutes' AND ai_forecast IS NOT NULL
+        UNION ALL
+        SELECT 'basket', home_team, away_team, date, ai_forecast, ai_probability, odds_home, odds_away
+        FROM matches_basket WHERE date BETWEEN NOW() + INTERVAL '25 minutes' AND NOW() + INTERVAL '35 minutes' AND ai_forecast IS NOT NULL
+        UNION ALL
+        SELECT 'esport', home_team, away_team, date, ai_forecast, ai_probability, odds_home, odds_away
+        FROM matches_esport WHERE date BETWEEN NOW() + INTERVAL '25 minutes' AND NOW() + INTERVAL '35 minutes' AND ai_forecast IS NOT NULL
+      ) t
+    `);
+
+    for (const m of res.rows) {
+      const sportIcon = { football: '⚽', basket: '🏀', esport: '🎮', tennis: '🎾' }[m.sport] || '🔮';
+      const isHomeWin = m.ai_forecast === 'Home Win' || (m.ai_forecast !== 'Away Win' && m.ai_forecast === m.home_team);
+      const winner = isHomeWin ? m.home_team : (m.ai_forecast === 'Away Win' ? m.away_team : m.ai_forecast);
+      const prob = m.ai_probability ? Math.round(parseFloat(m.ai_probability)) : null;
+      const probStr = prob && prob >= 58 ? ` | **${prob}% szans**` : '';
+      const gramy = prob && prob >= 65 ? ' 🔥 **GRAMY!**' : '';
+
+      await axios.post(DISCORD_WEBHOOK_URL, {
+        content: `🔔 **MECZ ZA 30 MINUT!** ${sportIcon}\n` +
+          `> **${m.home_team}** vs **${m.away_team}**\n` +
+          `> 🤖 AI typ: **${winner}**${probStr}${gramy}\n` +
+          `> ⏰ Za ~30 minut — postaw teraz lub wpisz \`zakładam <kwota> na ${winner}\`!`
+      });
+    }
+  } catch (e) {
+    console.error('sendMatchStartAlerts error:', e.message);
+  } finally {
+    client.release();
+  }
+}
+
+async function resolveVirtualBets() {
+  const client = await pool.connect();
+  try {
+    // Get finished matches with known results from all sports
+    const finished = await client.query(`
+      SELECT ph.fixture_id, ph.sport, ph.predicted_winner, ph.is_correct,
+             ph.predicted_odds, ph.predicted_prob,
+             CASE ph.sport
+               WHEN 'basket' THEN (SELECT CASE WHEN mb.ai_forecast='Home Win' THEN mb.odds_home ELSE mb.odds_away END FROM matches_basket mb WHERE mb.fixture_id=ph.fixture_id)
+               WHEN 'football' THEN (SELECT m.odds_home FROM matches m WHERE m.fixture_id=ph.fixture_id)
+               ELSE NULL
+             END AS current_odds
+      FROM predictions_history ph
+      WHERE ph.resolved = true AND ph.is_correct IS NOT NULL
+        AND EXISTS (SELECT 1 FROM virtual_bets vb WHERE vb.fixture_id=ph.fixture_id AND vb.status='pending')
+    `);
+
+    for (const match of finished.rows) {
+      const vbets = await client.query(`SELECT * FROM virtual_bets WHERE fixture_id=$1 AND status='pending'`, [match.fixture_id]);
+      for (const vb of vbets.rows) {
+        const won = match.is_correct === true;
+        const profit = won ? parseFloat((vb.potential_win - vb.stake).toFixed(2)) : -parseFloat(vb.stake);
+
+        await client.query(`
+          UPDATE virtual_bets SET status=$1, is_correct=$2, profit=$3, resolved_at=NOW()
+          WHERE id=$4
+        `, [won ? 'won' : 'lost', won, profit, vb.id]);
+
+        await client.query(`
+          UPDATE virtual_bankroll SET
+            balance = balance + $1,
+            wins = wins + $2,
+            losses = losses + $3,
+            updated_at = NOW()
+          WHERE user_id = $4
+        `, [
+          won ? parseFloat(vb.potential_win) : 0,
+          won ? 1 : 0,
+          won ? 0 : 1,
+          vb.user_id
+        ]);
+
+        // Notify user if webhook available
+        if (DISCORD_WEBHOOK_URL) {
+          const icon = won ? '✅' : '❌';
+          await axios.post(DISCORD_WEBHOOK_URL, {
+            content: `${icon} **<@${vb.user_id}> — Rozliczenie zakładu**\n` +
+              `> 🏆 **${vb.pick}** — ${won ? 'WYGRANA' : 'PRZEGRANA'}\n` +
+              `> 💰 ${won ? `+${parseFloat(vb.potential_win - vb.stake).toFixed(0)}💰 zysk` : `-${parseFloat(vb.stake).toFixed(0)}💰 strata`}\n` +
+              `> 💳 Twój balans: zaktualizowany — wpisz \`moj_profil\` żeby sprawdzić`
+          }).catch(() => {});
+        }
+      }
+
+      // Update CLV in predictions_history
+      if (match.current_odds && match.predicted_odds) {
+        const closingImplied = 1 / parseFloat(match.current_odds);
+        const predictedImplied = parseFloat(match.predicted_prob) / 100;
+        const clv = parseFloat(((predictedImplied - closingImplied) * 100).toFixed(2));
+        await client.query(`UPDATE predictions_history SET clv=$1, closing_odds=$2 WHERE fixture_id=$3 AND sport=$4`,
+          [clv, match.current_odds, match.fixture_id, match.sport]);
+      }
+    }
+  } catch (e) {
+    console.error('resolveVirtualBets error:', e.message);
+  } finally {
+    client.release();
+  }
+}
+
 async function sendDailyCoupon() {
   if (!DISCORD_WEBHOOK_URL) return;
   const client = await pool.connect();
@@ -1053,7 +1352,13 @@ function start() {
   // Daily coupon at 20:00 (Europe/Warsaw = UTC+1/+2)
   cron.schedule('0 19 * * *', () => { sendDailyCoupon(); }, { timezone: 'Europe/Warsaw' });
 
-  console.log('Analysis service scheduled to run every 10 minutes (Signals) + daily coupon at 20:00.');
+  // Match start alerts — every 5 minutes
+  cron.schedule('*/5 * * * *', () => { sendMatchStartAlerts(); });
+
+  // Resolve virtual bets + CLV — every 30 minutes
+  cron.schedule('*/30 * * * *', () => { resolveVirtualBets(); });
+
+  console.log('Analysis service: 10min analysis, 5min match alerts, 30min bet resolution, 20:00 daily coupon.');
 }
 
 start();

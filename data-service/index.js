@@ -161,6 +161,8 @@ async function initDB() {
     `);
 
     await client.query(`ALTER TABLE matches_esport ADD COLUMN IF NOT EXISTS ai_probability DECIMAL DEFAULT NULL;`);
+    await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS closing_odds DECIMAL DEFAULT NULL;`);
+    await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS clv DECIMAL DEFAULT NULL;`);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS predictions_history (
@@ -201,7 +203,56 @@ async function initDB() {
       );
     `);
 
-    console.log('All 6 tables initialized successfully (matches, matches_basket, matches_tennis, matches_esport, team_stats_esport, config).');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS player_props_basket (
+        id SERIAL PRIMARY KEY,
+        fixture_id VARCHAR(100) NOT NULL,
+        player_name VARCHAR(200) NOT NULL,
+        market VARCHAR(50) NOT NULL,
+        line DECIMAL,
+        odds_over DECIMAL,
+        odds_under DECIMAL,
+        ai_pick VARCHAR(10),
+        ai_probability DECIMAL,
+        match_date TIMESTAMP,
+        fetched_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(fixture_id, player_name, market)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS virtual_bankroll (
+        user_id VARCHAR(100) PRIMARY KEY,
+        username VARCHAR(100),
+        balance DECIMAL DEFAULT 1000,
+        total_bets INTEGER DEFAULT 0,
+        wins INTEGER DEFAULT 0,
+        losses INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS virtual_bets (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR(100) NOT NULL,
+        username VARCHAR(100),
+        fixture_id VARCHAR(100),
+        sport VARCHAR(20),
+        pick VARCHAR(200),
+        odds DECIMAL,
+        stake DECIMAL,
+        potential_win DECIMAL,
+        status VARCHAR(20) DEFAULT 'pending',
+        is_correct BOOLEAN,
+        profit DECIMAL,
+        placed_at TIMESTAMP DEFAULT NOW(),
+        resolved_at TIMESTAMP
+      );
+    `);
+
+    console.log('All 9 tables initialized (matches, basket, tennis, esport, stats_esport, config, predictions_history, player_props_basket, virtual_bankroll, virtual_bets).');
   } catch (err) {
     console.error('Error initializing db', err);
   } finally {
@@ -683,6 +734,75 @@ async function fetchEsportHistoricalStats() {
   console.log(`Esport historical stats: updated ${saved} teams in DB.`);
 }
 
+async function fetchNBAPlayerProps() {
+  const ODDS_API_KEY = getRandomOddsKey();
+  if (!ODDS_API_KEY) return;
+  const client = await pool.connect();
+  try {
+    // Get upcoming NBA fixture IDs we already have
+    const matches = await client.query(`SELECT fixture_id, home_team, away_team, date FROM matches_basket WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' LIMIT 6`);
+    if (matches.rows.length === 0) { client.release(); return; }
+
+    // Delete stale props (> 2 days old)
+    await client.query(`DELETE FROM player_props_basket WHERE match_date < NOW() - INTERVAL '2 days'`);
+
+    let saved = 0;
+    for (const m of matches.rows) {
+      // Extract event ID from fixture_id (nba_<eventId>)
+      const eventId = m.fixture_id.replace('nba_', '');
+      try {
+        const res = await axios.get(`https://api.the-odds-api.com/v4/sports/basketball_nba/events/${eventId}/odds`, {
+          params: { apiKey: ODDS_API_KEY, regions: 'us', markets: 'player_points,player_rebounds,player_assists', oddsFormat: 'decimal' },
+          timeout: 15000
+        });
+
+        const bm = res.data?.bookmakers?.[0];
+        if (!bm) continue;
+
+        for (const mkt of bm.markets || []) {
+          const marketKey = mkt.key; // player_points, player_rebounds, player_assists
+          // Group outcomes by player (Over/Under pairs)
+          const playerMap = {};
+          for (const o of mkt.outcomes || []) {
+            const pName = o.description || o.name;
+            if (!playerMap[pName]) playerMap[pName] = {};
+            if (o.name === 'Over') { playerMap[pName].over = o.price; playerMap[pName].line = o.point; }
+            if (o.name === 'Under') { playerMap[pName].under = o.price; }
+          }
+
+          for (const [player, data] of Object.entries(playerMap)) {
+            if (!data.over || !data.under || !data.line) continue;
+            // Simple AI pick: slight favor to Over (NBA offense-driven meta)
+            const impliedOver = 1 / data.over;
+            const impliedUnder = 1 / data.under;
+            const fairOver = impliedOver / (impliedOver + impliedUnder);
+            const pick = fairOver >= 0.5 ? 'Over' : 'Under';
+            const prob = Math.round((fairOver >= 0.5 ? fairOver : 1 - fairOver) * 100);
+
+            await client.query(`
+              INSERT INTO player_props_basket (fixture_id, player_name, market, line, odds_over, odds_under, ai_pick, ai_probability, match_date)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+              ON CONFLICT (fixture_id, player_name, market) DO UPDATE SET
+                line=EXCLUDED.line, odds_over=EXCLUDED.odds_over, odds_under=EXCLUDED.odds_under,
+                ai_pick=EXCLUDED.ai_pick, ai_probability=EXCLUDED.ai_probability, fetched_at=NOW()
+            `, [m.fixture_id, player, marketKey, data.line, data.over, data.under, pick, prob, m.date]);
+            saved++;
+          }
+        }
+      } catch (e) {
+        if (e.response?.status === 401) { await handleOdds401('player_props'); break; }
+        if (e.response?.status === 422) continue; // event not found in odds API
+        console.error(`Player props fetch error for ${m.home_team} vs ${m.away_team}: ${e.message}`);
+      }
+    }
+    if (saved > 0) console.log(`Player props: saved/updated ${saved} props for ${matches.rows.length} NBA matches.`);
+  } catch (e) {
+    console.error('fetchNBAPlayerProps error:', e.message);
+  } finally {
+    client.release();
+  }
+}
+
 async function runFetchCycle() {
   await loadActiveOddsKeyFromDB(); // pick up any new key sent via Discord
   await fetchUpcomingMatches();
@@ -690,6 +810,7 @@ async function runFetchCycle() {
   await fetchUpcomingTennisMatches();
   await fetchUpcomingEsportsMatches();
   await fetchEsportHistoricalStats();
+  await fetchNBAPlayerProps();
 }
 
 async function start() {
