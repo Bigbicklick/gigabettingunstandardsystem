@@ -609,6 +609,9 @@ discordClient.on('messageCreate', async (message) => {
         FROM player_props_basket pp
         JOIN matches_basket mb ON mb.fixture_id = pp.fixture_id
         WHERE pp.match_date > NOW() AND pp.match_date < NOW() + INTERVAL '36 hours'
+          AND mb.status IN ('NS', 'TBD')
+          AND mb.odds_home IS NOT NULL
+          AND mb.odds_away IS NOT NULL
         ORDER BY pp.match_date ASC, pp.ai_probability DESC
         LIMIT 30
       `);
@@ -624,11 +627,15 @@ discordClient.on('messageCreate', async (message) => {
         grouped[key].props.push(row);
       }
 
-      let payloads = [], cr = '🏀 **PROPSY NBA — AI PICKS**\n\n';
+      let payloads = [], cr = '🏀 **PROPSY NBA — AI PICKS**\n_⚠️ Dane z The Odds API (pokrywa wszystkie mecze NBA). Sprawdź dostępność u swojego bukmachera._\n\n';
+      const nowWarsaw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
       for (const [matchKey, data] of Object.entries(grouped)) {
         const dt = new Date(data.date);
-        const timeStr = dt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-        let chunk = `**${matchKey}** — ⏰ ${timeStr}\n`;
+        const dtWarsaw = new Date(dt.toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
+        const timeStr = dt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+        const isToday = dtWarsaw.toDateString() === nowWarsaw.toDateString();
+        const dayLabel = isToday ? 'Dziś' : 'Jutro';
+        let chunk = `**${matchKey}** — ${dayLabel} ⏰ ${timeStr}\n`;
         for (const p of data.props) {
           const mktLabel = markets[p.market] || p.market;
           const edge = p.ai_pick === 'Over' ? parseFloat(p.odds_over) : parseFloat(p.odds_under);
