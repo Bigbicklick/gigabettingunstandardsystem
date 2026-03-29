@@ -602,54 +602,149 @@ discordClient.on('messageCreate', async (message) => {
   } else if (message.content.startsWith('propsy')) {
     const pgClient = await pool.connect();
     try {
-      const markets = { player_points: 'Punkty', player_rebounds: 'Zbiórki', player_assists: 'Asysty' };
-      const r = await pgClient.query(`
+      const nowWarsaw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
+      const fmtTime = dt => new Date(dt).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+      const dayLabel = dt => {
+        const d = new Date(new Date(dt).toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
+        return d.toDateString() === nowWarsaw.toDateString() ? 'Dziś' : 'Jutro';
+      };
+
+      // ── BASKETBALL O/U PROPS ──────────────────────────────────────────
+      const baskR = await pgClient.query(`
         SELECT pp.player_name, pp.market, pp.line, pp.odds_over, pp.odds_under, pp.ai_pick, pp.ai_probability,
                mb.home_team, mb.away_team, pp.match_date
         FROM player_props_basket pp
         JOIN matches_basket mb ON mb.fixture_id = pp.fixture_id
         WHERE pp.match_date > NOW() AND pp.match_date < NOW() + INTERVAL '36 hours'
-          AND mb.status IN ('NS', 'TBD')
-          AND mb.odds_home IS NOT NULL
-          AND mb.odds_away IS NOT NULL
-        ORDER BY pp.match_date ASC, pp.ai_probability DESC
-        LIMIT 30
+          AND mb.status IN ('NS','TBD') AND mb.odds_home IS NOT NULL AND mb.odds_away IS NOT NULL
+        ORDER BY pp.match_date ASC, pp.ai_probability DESC LIMIT 30
       `);
-      if (r.rows.length === 0) {
-        return message.reply('ℹ️ Brak propsów NBA na najbliższe 36h. Dane odświeżają się co 8h — spróbuj później.');
+
+      // ── FOOTBALL GOALSCORER PROPS ─────────────────────────────────────
+      const footR = await pgClient.query(`
+        SELECT player_name, market, odds_to_score, ai_probability, home_team, away_team, match_date
+        FROM player_props_football
+        WHERE match_date > NOW() AND match_date < NOW() + INTERVAL '36 hours'
+        ORDER BY match_date ASC, ai_probability DESC LIMIT 50
+      `);
+
+      const hasBasket = baskR.rows.length > 0;
+      const hasFoot   = footR.rows.length > 0;
+
+      if (!hasBasket && !hasFoot) {
+        return message.reply('ℹ️ Brak propsów na najbliższe 36h. Dane odświeżają się co 8h — spróbuj później.');
       }
 
-      // Group by match
-      const grouped = {};
-      for (const row of r.rows) {
-        const key = `${row.home_team} vs ${row.away_team}`;
-        if (!grouped[key]) grouped[key] = { date: row.match_date, props: [] };
-        grouped[key].props.push(row);
-      }
+      let payloads = [];
 
-      let payloads = [], cr = '🏀 **PROPSY NBA — AI PICKS**\n_⚠️ Dane z The Odds API (pokrywa wszystkie mecze NBA). Sprawdź dostępność u swojego bukmachera._\n\n';
-      const nowWarsaw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
-      for (const [matchKey, data] of Object.entries(grouped)) {
-        const dt = new Date(data.date);
-        const dtWarsaw = new Date(dt.toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
-        const timeStr = dt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
-        const isToday = dtWarsaw.toDateString() === nowWarsaw.toDateString();
-        const dayLabel = isToday ? 'Dziś' : 'Jutro';
-        let chunk = `**${matchKey}** — ${dayLabel} ⏰ ${timeStr}\n`;
-        for (const p of data.props) {
-          const mktLabel = markets[p.market] || p.market;
-          const edge = p.ai_pick === 'Over' ? parseFloat(p.odds_over) : parseFloat(p.odds_under);
-          const flag = parseFloat(p.ai_probability) >= 55 ? '✅' : '🔹';
-          chunk += `> ${flag} **${p.player_name}** — ${mktLabel} ${p.ai_pick} **${p.line}** @ ${parseFloat(edge).toFixed(2)} _(${p.ai_probability}%)_\n`;
+      // ── Build basketball message ──────────────────────────────────────
+      if (hasBasket) {
+        const markets = { player_points: 'Punkty', player_rebounds: 'Zbiórki', player_assists: 'Asysty' };
+        const grouped = {};
+        for (const row of baskR.rows) {
+          const key = `${row.home_team} vs ${row.away_team}`;
+          if (!grouped[key]) grouped[key] = { date: row.match_date, props: [] };
+          grouped[key].props.push(row);
         }
-        chunk += '\n';
-        if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
+        let cr = '🏀 **PROPSY NBA — Statystyki zawodników**\n_Dane: The Odds API — sprawdź dostępność u bukmachera_\n\n';
+        for (const [matchKey, data] of Object.entries(grouped)) {
+          let chunk = `**${matchKey}** — ${dayLabel(data.date)} ⏰ ${fmtTime(data.date)}\n`;
+          for (const p of data.props.slice(0, 8)) {
+            const mktLabel = markets[p.market] || p.market;
+            const odds = p.ai_pick === 'Over' ? parseFloat(p.odds_over) : parseFloat(p.odds_under);
+            const flag = parseFloat(p.ai_probability) >= 58 ? '✅' : '🔹';
+            chunk += `> ${flag} **${p.player_name}** — ${mktLabel} ${p.ai_pick} **${p.line}** @ ${odds.toFixed(2)} _(${p.ai_probability}%)_\n`;
+          }
+          chunk += '\n';
+          if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
+        }
+        if (cr.trim()) payloads.push(cr);
       }
-      if (cr.trim()) payloads.push(cr);
+
+      // ── Build football message ────────────────────────────────────────
+      if (hasFoot) {
+        const mktLabels = { player_goal_scorer_anytime: '⚽ Strzelec gola', player_to_receive_card: '🟨 Żółta kartka' };
+        const fGrouped = {};
+        for (const row of footR.rows) {
+          const key = `${row.home_team} vs ${row.away_team}`;
+          if (!fGrouped[key]) fGrouped[key] = { date: row.match_date, props: [] };
+          fGrouped[key].props.push(row);
+        }
+        let cr = '⚽ **PROPSY PIŁKA NOŻNA — Statystyki zawodników**\n_Dane: The Odds API — sprawdź dostępność u bukmachera_\n\n';
+        for (const [matchKey, data] of Object.entries(fGrouped)) {
+          let chunk = `**${matchKey}** — ${dayLabel(data.date)} ⏰ ${fmtTime(data.date)}\n`;
+          // Show top scorers (highest probability = lowest odds) + top card candidates separately
+          const goalProps  = data.props.filter(p => p.market === 'player_goal_scorer_anytime').slice(0, 5);
+          const cardProps  = data.props.filter(p => p.market === 'player_to_receive_card').slice(0, 3);
+          for (const p of goalProps) {
+            const flag = parseFloat(p.ai_probability) >= 30 ? '✅' : '🔹';
+            chunk += `> ${flag} **${p.player_name}** — ⚽ Strzelec @ **${parseFloat(p.odds_to_score).toFixed(2)}** _(~${p.ai_probability}%)_\n`;
+          }
+          for (const p of cardProps) {
+            chunk += `> 🟨 **${p.player_name}** — Kartka @ **${parseFloat(p.odds_to_score).toFixed(2)}** _(~${p.ai_probability}%)_\n`;
+          }
+          chunk += '\n';
+          if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
+        }
+        if (cr.trim()) payloads.push(cr);
+      }
+
+      // ── NAJLEPSZY KUPON PROPSÓW (AKO) ────────────────────────────────
+      // Collect best single pick per match across both sports, sorted by prob
+      const coupCandidates = [];
+
+      // Basketball: best pick per match (prob >= 55%)
+      const baskBestPerMatch = {};
+      for (const row of baskR.rows) {
+        const key = `${row.home_team}|${row.away_team}`;
+        const prob = parseFloat(row.ai_probability);
+        if (prob >= 55 && (!baskBestPerMatch[key] || prob > baskBestPerMatch[key].prob)) {
+          const odds = row.ai_pick === 'Over' ? parseFloat(row.odds_over) : parseFloat(row.odds_under);
+          const markets = { player_points: 'Pkt', player_rebounds: 'Zb', player_assists: 'As' };
+          baskBestPerMatch[key] = {
+            label: `🏀 **${row.player_name}** ${markets[row.market] || ''} ${row.ai_pick} ${row.line}`,
+            odds, prob, matchDate: row.match_date,
+            matchLabel: `${row.home_team} vs ${row.away_team}`
+          };
+        }
+      }
+      coupCandidates.push(...Object.values(baskBestPerMatch));
+
+      // Football: best goalscorer per match (prob >= 28% ≈ odds <= 3.60)
+      const footBestPerMatch = {};
+      for (const row of footR.rows) {
+        if (row.market !== 'player_goal_scorer_anytime') continue;
+        const key = `${row.home_team}|${row.away_team}`;
+        const prob = parseFloat(row.ai_probability);
+        if (prob >= 28 && (!footBestPerMatch[key] || prob > footBestPerMatch[key].prob)) {
+          footBestPerMatch[key] = {
+            label: `⚽ **${row.player_name}** — strzelec`,
+            odds: parseFloat(row.odds_to_score), prob, matchDate: row.match_date,
+            matchLabel: `${row.home_team} vs ${row.away_team}`
+          };
+        }
+      }
+      coupCandidates.push(...Object.values(footBestPerMatch));
+
+      // Sort by prob DESC, take top 5
+      coupCandidates.sort((a, b) => b.prob - a.prob);
+      const top = coupCandidates.slice(0, 5);
+
+      if (top.length >= 2) {
+        const combinedOdds = top.reduce((acc, p) => acc * p.odds, 1);
+        const combinedProb  = top.reduce((acc, p) => acc * (p.prob / 100), 1) * 100;
+        let coupMsg = `\n📋 **NAJLEPSZY KUPON PROPSÓW — TOP ${top.length} AKO**\n`;
+        coupMsg += `_Łączny kurs: **${combinedOdds.toFixed(2)}** | Est. szansa: ~${combinedProb.toFixed(1)}%_\n\n`;
+        for (const p of top) {
+          coupMsg += `> ✅ ${p.label} _(${p.prob}% — ${dayLabel(p.matchDate)} ${fmtTime(p.matchDate)} — ${p.matchLabel})_\n`;
+        }
+        payloads.push(coupMsg);
+      }
+
       for (const p of payloads) await message.reply(p);
     } catch(e) {
       console.error(e);
-      return message.reply('Błąd pobierania propsów NBA.');
+      return message.reply('Błąd pobierania propsów.');
     } finally { pgClient.release(); }
 
   } else if (message.content.match(/^zakładam\s+(\d+(?:\.\d+)?)\s+na\s+(.+)$/i)) {

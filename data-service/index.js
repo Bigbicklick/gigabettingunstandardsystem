@@ -252,7 +252,23 @@ async function initDB() {
       );
     `);
 
-    console.log('All 9 tables initialized (matches, basket, tennis, esport, stats_esport, config, predictions_history, player_props_basket, virtual_bankroll, virtual_bets).');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS player_props_football (
+        id SERIAL PRIMARY KEY,
+        fixture_id VARCHAR(100) NOT NULL,
+        player_name VARCHAR(200) NOT NULL,
+        market VARCHAR(50) NOT NULL DEFAULT 'player_goal_scorer_anytime',
+        odds_to_score DECIMAL,
+        ai_probability DECIMAL,
+        home_team VARCHAR(100),
+        away_team VARCHAR(100),
+        match_date TIMESTAMP,
+        fetched_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(fixture_id, player_name, market)
+      );
+    `);
+
+    console.log('All 10 tables initialized.');
   } catch (err) {
     console.error('Error initializing db', err);
   } finally {
@@ -803,6 +819,133 @@ async function fetchNBAPlayerProps() {
   }
 }
 
+async function fetchFootballPlayerProps() {
+  const ODDS_API_KEY = getRandomOddsKey();
+  if (!ODDS_API_KEY) return;
+  const client = await pool.connect();
+  try {
+    const matches = await client.query(`
+      SELECT fixture_id, league_name, home_team, away_team, date
+      FROM matches
+      WHERE date > NOW() AND date < NOW() + INTERVAL '30 hours'
+      AND odds_home IS NOT NULL AND status IN ('NS','TBD')
+      ORDER BY date ASC LIMIT 5
+    `);
+    if (matches.rows.length === 0) { client.release(); return; }
+
+    await client.query(`DELETE FROM player_props_football WHERE match_date < NOW() - INTERVAL '2 days'`);
+
+    // League name → Odds API sport key
+    const leagueKeyMap = [
+      { patterns: ['Champions League', 'UEFA Champions'], key: 'soccer_uefa_champs_league' },
+      { patterns: ['Europa League', 'UEFA Europa'], key: 'soccer_uefa_europa_league' },
+      { patterns: ['Conference League'], key: 'soccer_uefa_europa_conference_league' },
+      { patterns: ['Premier League'], key: 'soccer_epl' },
+      { patterns: ['La Liga', 'Primera Division'], key: 'soccer_spain_la_liga' },
+      { patterns: ['Bundesliga 1', 'Bundesliga'], key: 'soccer_germany_bundesliga' },
+      { patterns: ['Serie A'], key: 'soccer_italy_serie_a' },
+      { patterns: ['Ligue 1'], key: 'soccer_france_ligue_one' },
+      { patterns: ['Ekstraklasa'], key: 'soccer_poland_ekstraklasa' },
+      { patterns: ['Eredivisie'], key: 'soccer_netherlands_eredivisie' },
+      { patterns: ['Primeira Liga'], key: 'soccer_portugal_primeira_liga' },
+    ];
+
+    function getSportKey(leagueName) {
+      if (!leagueName) return null;
+      for (const { patterns, key } of leagueKeyMap) {
+        if (patterns.some(p => leagueName.toLowerCase().includes(p.toLowerCase()))) return key;
+      }
+      return null;
+    }
+
+    // Group matches by sport key
+    const byKey = {};
+    for (const m of matches.rows) {
+      const sk = getSportKey(m.league_name);
+      if (!sk) continue;
+      if (!byKey[sk]) byKey[sk] = [];
+      byKey[sk].push(m);
+    }
+    if (Object.keys(byKey).length === 0) { client.release(); return; }
+
+    // Normalize team name for fuzzy matching
+    const norm = s => (s || '').toLowerCase().replace(/\s*(fc|afc|sc|cf|bsc|fk|1\.|\.|\s+)\s*/gi, ' ').trim();
+
+    let saved = 0;
+    for (const [sportKey, sportMatches] of Object.entries(byKey)) {
+      // 1 call: get Odds API event list for this sport key
+      let oddsEvents = [];
+      try {
+        const evRes = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/events`, {
+          params: { apiKey: ODDS_API_KEY, dateFormat: 'iso' },
+          timeout: 10000
+        });
+        oddsEvents = evRes.data || [];
+      } catch (e) {
+        if (e.response?.status === 401) { await handleOdds401('football_props_events'); break; }
+        if (e.response?.status === 422) continue;
+        console.error(`Football props events error (${sportKey}):`, e.message);
+        continue;
+      }
+
+      for (const m of sportMatches) {
+        const matchDate = new Date(m.date);
+        // Fuzzy match by team name + date (within 4h window)
+        const found = oddsEvents.find(e => {
+          const hoursDiff = Math.abs(new Date(e.commence_time) - matchDate) / 3600000;
+          if (hoursDiff > 4) return false;
+          const hn = norm(m.home_team); const ehn = norm(e.home_team || '');
+          const an = norm(m.away_team); const ean = norm(e.away_team || '');
+          const homeOk = hn.slice(0,5) === ehn.slice(0,5) || hn.includes(ehn.slice(0,5)) || ehn.includes(hn.slice(0,5));
+          const awayOk = an.slice(0,5) === ean.slice(0,5) || an.includes(ean.slice(0,5)) || ean.includes(an.slice(0,5));
+          return homeOk && awayOk;
+        });
+        if (!found) continue;
+
+        // 1 call: fetch player goalscorer + card props
+        try {
+          const propsRes = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/events/${found.id}/odds`, {
+            params: {
+              apiKey: ODDS_API_KEY,
+              regions: 'eu',
+              markets: 'player_goal_scorer_anytime,player_to_receive_card',
+              oddsFormat: 'decimal'
+            },
+            timeout: 15000
+          });
+          const bm = propsRes.data?.bookmakers?.[0];
+          if (!bm) continue;
+
+          for (const mkt of bm.markets || []) {
+            // For goalscorer: raw implied prob (1/odds) — multiple players CAN score in same game
+            for (const o of mkt.outcomes || []) {
+              if (!o.price || o.price <= 1) continue;
+              const impliedProb = Math.round((1 / o.price) * 100);
+              await client.query(`
+                INSERT INTO player_props_football
+                  (fixture_id, player_name, market, odds_to_score, ai_probability, home_team, away_team, match_date)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                ON CONFLICT (fixture_id, player_name, market) DO UPDATE SET
+                  odds_to_score=EXCLUDED.odds_to_score, ai_probability=EXCLUDED.ai_probability, fetched_at=NOW()
+              `, [m.fixture_id, o.name, mkt.key, o.price, impliedProb, m.home_team, m.away_team, m.date]);
+              saved++;
+            }
+          }
+        } catch (e) {
+          if (e.response?.status === 401) { await handleOdds401('football_player_props'); return; }
+          if (e.response?.status === 422) continue;
+          console.error(`Football props fetch error (${m.home_team}):`, e.message);
+        }
+      }
+    }
+    if (saved > 0) console.log(`Football player props: saved/updated ${saved} props.`);
+  } catch (e) {
+    console.error('fetchFootballPlayerProps error:', e.message);
+  } finally {
+    client.release();
+  }
+}
+
 async function runFetchCycle() {
   await loadActiveOddsKeyFromDB(); // pick up any new key sent via Discord
   await fetchUpcomingMatches();
@@ -811,6 +954,7 @@ async function runFetchCycle() {
   await fetchUpcomingEsportsMatches();
   await fetchEsportHistoricalStats();
   await fetchNBAPlayerProps();
+  await fetchFootballPlayerProps();
 }
 
 async function start() {
