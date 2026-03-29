@@ -256,15 +256,14 @@ def predict_basket_match(home_team, away_team, odds_home=None, odds_away=None):
         fair_home = implied_home / total_implied
         fair_away = implied_away / total_implied
 
-        # Elo adjustment: convert Elo diff to probability shift
-        # Elo diff of 100 points = ~0.064 expected score difference
-        # We cap the adjustment at ±15%
+        # Elo adjustment: small correction on top of bookmaker odds (capped at ±8%)
+        # Bookmaker odds are the primary signal; Elo only provides minor context
         elo_diff = home_elo - away_elo
         # Only apply Elo adjustment if we have REAL Elo data (not both default 1500)
         if home_elo != get_base_elo() or away_elo != get_base_elo():
             elo_expected = calculate_expected_score(home_elo, away_elo)
-            elo_adjustment = (elo_expected - 0.5) * 0.30  # Scale: max ±15%
-            elo_adjustment = max(-0.15, min(0.15, elo_adjustment))
+            elo_adjustment = (elo_expected - 0.5) * 0.16  # Scale: max ±8%
+            elo_adjustment = max(-0.08, min(0.08, elo_adjustment))
         else:
             elo_adjustment = 0.0
 

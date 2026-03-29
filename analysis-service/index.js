@@ -307,18 +307,22 @@ discordClient.on('messageCreate', async (message) => {
           }
 
           if (m.ai_forecast) {
-            const edge = parseFloat(m.ai_edge) || 0;
+            // Resolve Home Win / Away Win to actual team name
+            const isHomeWin = m.ai_forecast === 'Home Win' || m.ai_forecast === m.home_team;
+            const predictedTeamB = isHomeWin ? m.home_team : m.away_team;
+            const pickedOddsB = isHomeWin ? m.odds_home : m.odds_away;
+
             // Win probability: prefer stored ML probability, fall back to odds-based
             let winPct = null;
             if (m.ai_probability !== null && m.ai_probability !== undefined) {
               winPct = Math.round(parseFloat(m.ai_probability));
             } else {
               const h2hP = fairProb2(m.odds_home, m.odds_away);
-              if (h2hP) winPct = m.ai_forecast === m.home_team ? h2hP[0] : h2hP[1];
+              if (h2hP) winPct = isHomeWin ? h2hP[0] : h2hP[1];
             }
             const sourceLabel = (m.ai_probability && parseFloat(m.ai_probability) > 0) ? '🧠 ML AI' : '📊 Kursowe AI';
             const winStr = winPct !== null ? ` — **${winPct}%**` : '';
-            chunk += `> ${sourceLabel}: **${m.ai_forecast}** wygra${winStr} szans statystycznie\n`;
+            chunk += `> ${sourceLabel}: **${predictedTeamB}** wygra${winStr} szans statystycznie\n`;
 
             // Totals O/U with % and line
             if (m.odds_totals_over && m.odds_totals_under) {
@@ -328,15 +332,14 @@ discordClient.on('messageCreate', async (message) => {
             }
 
             // Recommendation based purely on statistical probability
-            const pickedOddsB = m.ai_forecast === m.home_team ? m.odds_home : m.odds_away;
             const kellyB = winPct ? calcKelly(winPct, pickedOddsB) : null;
             const kellyStrB = kellyB ? ` | 🎯 Kelly: **${kellyB}% bankrolla**` : '';
             if (winPct !== null && winPct >= 65) {
-              chunk += `> ✅ **GRAMY: ${m.ai_forecast}** — ${winPct}% szans${kellyStrB} 🔥\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct, kelly: kellyB, odds: pickedOddsB });
+              chunk += `> ✅ **GRAMY: ${predictedTeamB}** — ${winPct}% szans${kellyStrB} 🔥\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: predictedTeamB, prob: winPct, kelly: kellyB, odds: pickedOddsB });
             } else if (winPct !== null && winPct >= 58) {
-              chunk += `> ✅ Warto rozważyć: **${m.ai_forecast}** — ${winPct}%${kellyStrB}\n`;
-              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: m.ai_forecast, prob: winPct, kelly: kellyB, odds: pickedOddsB });
+              chunk += `> ✅ Warto rozważyć: **${predictedTeamB}** — ${winPct}%${kellyStrB}\n`;
+              akoCandidates.push({ match: `${m.home_team} vs ${m.away_team}`, pick: predictedTeamB, prob: winPct, kelly: kellyB, odds: pickedOddsB });
             } else {
               chunk += `> ℹ️ Brak pewnej prognozy (${winPct !== null ? winPct + '%' : 'brak danych'})\n`;
             }
@@ -967,12 +970,14 @@ async function sendDailyCoupon() {
     rows.push(...foot.rows);
 
     const bask = await client.query(`
-      SELECT 'basket' AS sport, home_team, away_team, ai_forecast AS winner, ai_probability AS prob,
-             CASE WHEN ai_forecast = home_team THEN odds_home ELSE odds_away END AS odds, date, league_name
+      SELECT 'basket' AS sport, home_team, away_team,
+             CASE WHEN ai_forecast = 'Home Win' THEN home_team ELSE away_team END AS winner,
+             ai_probability AS prob,
+             CASE WHEN ai_forecast = 'Home Win' THEN odds_home ELSE odds_away END AS odds, date, league_name
       FROM matches_basket WHERE date > NOW() AND date < NOW() + INTERVAL '36 hours'
       AND ai_probability >= 65 AND ai_forecast IS NOT NULL
       AND (
-        (CASE WHEN ai_forecast = home_team THEN odds_home ELSE odds_away END) <= 2.5
+        (CASE WHEN ai_forecast = 'Home Win' THEN odds_home ELSE odds_away END) <= 2.5
         OR ai_probability >= 72
       )
       ORDER BY ai_probability DESC LIMIT 4`);
