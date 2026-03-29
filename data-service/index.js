@@ -835,26 +835,35 @@ async function fetchFootballPlayerProps() {
 
     await client.query(`DELETE FROM player_props_football WHERE match_date < NOW() - INTERVAL '2 days'`);
 
-    // League name → Odds API sport key
+    // League name → Odds API sport key (order matters — more specific first)
     const leagueKeyMap = [
       { patterns: ['Champions League', 'UEFA Champions'], key: 'soccer_uefa_champs_league' },
       { patterns: ['Europa League', 'UEFA Europa'], key: 'soccer_uefa_europa_league' },
       { patterns: ['Conference League'], key: 'soccer_uefa_europa_conference_league' },
-      { patterns: ['Premier League'], key: 'soccer_epl' },
+      { patterns: ['Premier League', 'England - Premier'], key: 'soccer_epl' },
       { patterns: ['La Liga', 'Primera Division'], key: 'soccer_spain_la_liga' },
       { patterns: ['Bundesliga 1', 'Bundesliga'], key: 'soccer_germany_bundesliga' },
-      { patterns: ['Serie A'], key: 'soccer_italy_serie_a' },
       { patterns: ['Ligue 1'], key: 'soccer_france_ligue_one' },
       { patterns: ['Ekstraklasa'], key: 'soccer_poland_ekstraklasa' },
       { patterns: ['Eredivisie'], key: 'soccer_netherlands_eredivisie' },
       { patterns: ['Primeira Liga'], key: 'soccer_portugal_primeira_liga' },
+      // Brazil — check BEFORE generic 'Serie A' to avoid Italian false-positive
+      { patterns: ['Brasileirão', 'Brasileirao', 'Brazil', 'Brasileiro'], key: 'soccer_brazil_campeonato' },
+      // Italian Serie A — only if no Brazil indicator
+      { patterns: ['Italy', 'Italiana', 'Serie A TIM'], key: 'soccer_italy_serie_a' },
+      { patterns: ['Argentine', 'Argentina', 'Superliga'], key: 'soccer_argentina_primera_division' },
+      { patterns: ['MLS'], key: 'soccer_usa_mls' },
     ];
 
     function getSportKey(leagueName) {
       if (!leagueName) return null;
+      const l = leagueName.toLowerCase();
       for (const { patterns, key } of leagueKeyMap) {
-        if (patterns.some(p => leagueName.toLowerCase().includes(p.toLowerCase()))) return key;
+        if (patterns.some(p => l.includes(p.toLowerCase()))) return key;
       }
+      // Fallback: plain 'Serie A' is Brazilian if no country indicator
+      if (l.includes('serie a')) return 'soccer_brazil_campeonato';
+      if (l.includes('serie b')) return 'soccer_brazil_serie_b';
       return null;
     }
 
@@ -938,7 +947,8 @@ async function fetchFootballPlayerProps() {
         }
       }
     }
-    if (saved > 0) console.log(`Football player props: saved/updated ${saved} props.`);
+    console.log(`Football player props: checked ${matches.rows.length} matches, ${Object.keys(byKey).length} leagues matched, saved ${saved} props.`);
+    if (Object.keys(byKey).length === 0) console.log('Football props: no matches mapped to a known league key. DB league names:', matches.rows.map(m => m.league_name).join(', '));
   } catch (e) {
     console.error('fetchFootballPlayerProps error:', e.message);
   } finally {
