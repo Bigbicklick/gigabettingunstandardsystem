@@ -221,14 +221,24 @@ def predict_basket_match(home_team, away_team, odds_home=None, odds_away=None):
             # (favorite-longshot bias happens in some markets, but in NBA favorites are often undervalued)
             adj = 0.01 if fair_h > 0.5 else -0.01
             prob_h = fair_h + adj
-            edge = (prob_h - implied_h) * 100
-            
-            return {
-                "recommended_bet": "Home Win" if prob_h > 0.5 else "Away Win",
-                "model_probability": round(prob_h * 100, 2),
-                "edge_percent": round(edge if prob_h > 0.5 else (1-prob_h-implied_a)*100, 2),
-                "is_value": abs(edge) > 3.0
-            }
+            prob_a = 1.0 - prob_h
+            edge_h = (prob_h - implied_h) * 100
+            edge_a = (prob_a - implied_a) * 100
+
+            if prob_h > 0.5:
+                return {
+                    "recommended_bet": "Home Win",
+                    "model_probability": round(prob_h * 100, 2),
+                    "edge_percent": round(edge_h, 2),
+                    "is_value": edge_h > 3.0
+                }
+            else:
+                return {
+                    "recommended_bet": "Away Win",
+                    "model_probability": round(prob_a * 100, 2),  # Fixed: return AWAY probability
+                    "edge_percent": round(edge_a, 2),
+                    "is_value": edge_a > 3.0
+                }
         return {"recommended_bet": "Analysis Pending", "model_probability": 50.0, "edge_percent": 0.0, "is_value": False}
 
     state = joblib.load(BASKET_STATE_FILE)
