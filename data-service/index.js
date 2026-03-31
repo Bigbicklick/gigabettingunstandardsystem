@@ -177,6 +177,31 @@ async function initDB() {
     await client.query(`ALTER TABLE matches_esport ADD COLUMN IF NOT EXISTS away_score INT DEFAULT NULL;`);
     await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS brier_score DECIMAL DEFAULT NULL;`);
 
+    // Line movement tracking — set once on first insert, never overwritten
+    await client.query(`ALTER TABLE matches        ADD COLUMN IF NOT EXISTS initial_odds_home DECIMAL DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches        ADD COLUMN IF NOT EXISTS initial_odds_away DECIMAL DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches_basket ADD COLUMN IF NOT EXISTS initial_odds_home DECIMAL DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches_basket ADD COLUMN IF NOT EXISTS initial_odds_away DECIMAL DEFAULT NULL;`);
+
+    // predictions_history resolved flag (in case not yet present)
+    await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS resolved BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS is_correct BOOLEAN DEFAULT NULL;`);
+
+    // Injury tracking
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS team_injuries (
+        id SERIAL PRIMARY KEY,
+        team_name VARCHAR(200) NOT NULL,
+        player_name VARCHAR(200) NOT NULL,
+        fixture_id VARCHAR(100),
+        injury_type VARCHAR(100),
+        status VARCHAR(50),
+        is_key_player BOOLEAN DEFAULT false,
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(team_name, player_name, fixture_id)
+      );
+    `);
+
     // ELO ratings table
     await client.query(`
       CREATE TABLE IF NOT EXISTS team_elo (
@@ -451,8 +476,8 @@ async function fetchUpcomingMatches() {
           if (!oddsHome || !oddsDraw || !oddsAway) continue;
 
           await client.query(`
-            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under, odds_dc_1x, odds_dc_x2, odds_dc_12, odds_dnb_home, odds_dnb_away)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            INSERT INTO matches (fixture_id, league_name, home_team, away_team, date, status, odds_home, odds_draw, odds_away, odds_btts_yes, odds_btts_no, odds_ou_over, odds_ou_under, odds_corners_over, odds_corners_under, odds_dc_1x, odds_dc_x2, odds_dc_12, odds_dnb_home, odds_dnb_away, initial_odds_home, initial_odds_away)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $7, $9)
             ON CONFLICT (fixture_id) DO UPDATE 
             SET odds_home = EXCLUDED.odds_home, 
                 odds_draw = EXCLUDED.odds_draw, 
@@ -468,7 +493,9 @@ async function fetchUpcomingMatches() {
                 odds_dc_12 = EXCLUDED.odds_dc_12,
                 odds_dnb_home = EXCLUDED.odds_dnb_home,
                 odds_dnb_away = EXCLUDED.odds_dnb_away,
-                date = EXCLUDED.date;
+                date = EXCLUDED.date,
+                initial_odds_home = COALESCE(matches.initial_odds_home, EXCLUDED.initial_odds_home),
+                initial_odds_away = COALESCE(matches.initial_odds_away, EXCLUDED.initial_odds_away);
           `, [
             `fb_${match.fixture.id}`, 
             match.league.name, 
@@ -551,8 +578,9 @@ async function fetchUpcomingBasketballMatches() {
           INSERT INTO matches_basket (
             fixture_id, league_name, home_team, away_team, date, 
             status, odds_home, odds_away, odds_spread_home, odds_spread_away, 
-            odds_totals_over, odds_totals_under, totals_point
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            odds_totals_over, odds_totals_under, totals_point,
+            initial_odds_home, initial_odds_away
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $7, $8)
           ON CONFLICT (fixture_id) DO UPDATE SET
             odds_home = EXCLUDED.odds_home,
             odds_away = EXCLUDED.odds_away,
@@ -560,7 +588,9 @@ async function fetchUpcomingBasketballMatches() {
             odds_spread_away = EXCLUDED.odds_spread_away,
             odds_totals_over = EXCLUDED.odds_totals_over,
             odds_totals_under = EXCLUDED.odds_totals_under,
-            totals_point = EXCLUDED.totals_point
+            totals_point = EXCLUDED.totals_point,
+            initial_odds_home = COALESCE(matches_basket.initial_odds_home, EXCLUDED.initial_odds_home),
+            initial_odds_away = COALESCE(matches_basket.initial_odds_away, EXCLUDED.initial_odds_away)
         `, [
           `nba_${match.id}`, 'NBA', match.home_team, match.away_team, match.commence_time, 
           'NS', oddsHome, oddsAway, spreadHome, spreadAway, totalsOver, totalsUnder, totalsPoint
@@ -1026,6 +1056,66 @@ async function fetchFootballPlayerProps() {
   }
 }
 
+async function fetchFootballInjuries() {
+  const API_KEY = process.env.API_FOOTBALL_KEY;
+  if (!API_KEY) return;
+  const client = await pool.connect();
+  try {
+    // Get upcoming football matches in the next 5 days that have fixture IDs
+    const upcoming = await client.query(`
+      SELECT fixture_id, home_team, away_team, date FROM matches
+      WHERE date > NOW() AND date < NOW() + INTERVAL '5 days'
+        AND status IN ('NS','TBD') AND odds_home IS NOT NULL
+      LIMIT 20
+    `);
+    if (upcoming.rows.length === 0) return;
+
+    await client.query(`DELETE FROM team_injuries WHERE updated_at < NOW() - INTERVAL '7 days'`);
+
+    // Track top scorers per team to flag as key players (simple heuristic: query from DB)
+    let saved = 0;
+    for (const m of upcoming.rows) {
+      const fixtureNumericId = m.fixture_id.replace('fb_', '');
+      if (isNaN(parseInt(fixtureNumericId))) continue;
+      await sleep(1200);
+      try {
+        const res = await axios.get('https://v3.football.api-sports.io/injuries', {
+          params: { fixture: fixtureNumericId },
+          headers: { 'x-apisports-key': API_KEY },
+          timeout: 12000
+        });
+        if (!res.data?.response?.length) continue;
+        for (const inj of res.data.response) {
+          const playerName = inj.player?.name;
+          const teamName   = inj.team?.name;
+          const injType    = inj.player?.type;
+          const status     = inj.player?.reason || 'Injured';
+          if (!playerName || !teamName) continue;
+          // Heuristic: goalkeepers + top field players are "key" (simplified by position)
+          const isKey = ['Goalkeeper', 'Defender'].includes(inj.player?.type) === false
+            ? true : false; // all outfield players are key for now
+          await client.query(`
+            INSERT INTO team_injuries (team_name, player_name, fixture_id, injury_type, status, is_key_player, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,NOW())
+            ON CONFLICT (team_name, player_name, fixture_id) DO UPDATE SET
+              status=EXCLUDED.status, injury_type=EXCLUDED.injury_type,
+              is_key_player=EXCLUDED.is_key_player, updated_at=NOW()
+          `, [teamName, playerName, m.fixture_id, injType, status, isKey]);
+          saved++;
+        }
+      } catch (e) {
+        if (e.response?.status === 429) { console.warn('Injuries API rate limit hit, stopping.'); break; }
+        // non-critical, skip
+      }
+    }
+    if (saved > 0) console.log(`Football injuries: updated ${saved} injury records.`);
+  } catch (e) {
+    console.error('fetchFootballInjuries error:', e.message);
+  } finally {
+    client.release();
+  }
+}
+
 async function fetchRecentFootballResults() {
   const API_KEY = process.env.API_FOOTBALL_KEY;
   if (!API_KEY) return;
@@ -1106,6 +1196,7 @@ async function runFetchCycle() {
   // Results fetch runs separately to avoid mixing upcoming/finished API calls
   await fetchRecentFootballResults();
   await fetchRecentEsportResults();
+  await fetchFootballInjuries();
 }
 
 async function start() {

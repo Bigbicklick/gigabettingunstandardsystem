@@ -78,6 +78,143 @@ async function updateElo(client, sport, homeTeam, awayTeam, homeWon) {
 }
 // ────────────────────────────────────────────────────────────────────────────
 
+// ─── PREDICTION ACCURACY HELPERS ────────────────────────────────────────────
+
+// [1] RECENT FORM — last 5 resolved matches per team, returns %-point adjustment
+async function getRecentFormFactor(client, sport, teamName) {
+  try {
+    const table = sport === 'basket' ? 'matches_basket' : 'matches';
+    const statuses = sport === 'basket' ? ['FT','POST','finished'] : ['FT','AET','PEN'];
+    const r = await client.query(`
+      SELECT home_team, away_team, home_score, away_score
+      FROM ${table}
+      WHERE (home_team=$1 OR away_team=$1)
+        AND home_score IS NOT NULL AND away_score IS NOT NULL
+        AND status=ANY($2)
+      ORDER BY date DESC LIMIT 5
+    `, [teamName, statuses]);
+    if (r.rows.length < 3) return 0;
+    let wins = 0;
+    for (const m of r.rows) {
+      const tScore = m.home_team === teamName ? parseInt(m.home_score) : parseInt(m.away_score);
+      const oScore = m.home_team === teamName ? parseInt(m.away_score) : parseInt(m.home_score);
+      if (tScore > oScore) wins++;
+    }
+    const wr = wins / r.rows.length;
+    if (wr >= 0.8) return 5;
+    if (wr >= 0.6) return 3;
+    if (wr >= 0.4) return 0;
+    if (wr >= 0.2) return -3;
+    return -5;
+  } catch (e) { return 0; }
+}
+
+// [2] BACK-TO-BACK penalty for NBA — returns -6 if team played yesterday, else 0
+async function getBackToBackPenalty(client, teamName) {
+  try {
+    const r = await client.query(`
+      SELECT COUNT(*) AS cnt FROM matches_basket
+      WHERE (home_team=$1 OR away_team=$1)
+        AND date BETWEEN NOW() - INTERVAL '36 hours' AND NOW() - INTERVAL '2 hours'
+        AND status NOT IN ('NS','TBD','Canc')
+    `, [teamName]);
+    return parseInt(r.rows[0].cnt) > 0 ? -6 : 0;
+  } catch (e) { return 0; }
+}
+
+// [3] POISSON MODEL for football — returns {pHome, pDraw, pAway} as integers (%)
+function poissonVal(lambda, k) {
+  let fact = 1; for (let i = 2; i <= k; i++) fact *= i;
+  return Math.pow(lambda, k) * Math.exp(-lambda) / fact;
+}
+async function getPoissonProbs(client, homeTeam, awayTeam) {
+  try {
+    const stats = async (team) => {
+      const h = await client.query(`
+        SELECT AVG(home_score::decimal) s, AVG(away_score::decimal) c
+        FROM matches WHERE home_team=$1 AND home_score IS NOT NULL AND status IN ('FT','AET','PEN') ORDER BY date DESC LIMIT 10
+      `, [team]);
+      const a = await client.query(`
+        SELECT AVG(away_score::decimal) s, AVG(home_score::decimal) c
+        FROM matches WHERE away_team=$1 AND home_score IS NOT NULL AND status IN ('FT','AET','PEN') ORDER BY date DESC LIMIT 10
+      `, [team]);
+      const scored    = ((parseFloat(h.rows[0]?.s)||0) + (parseFloat(a.rows[0]?.s)||0)) / 2 || null;
+      const conceded  = ((parseFloat(h.rows[0]?.c)||0) + (parseFloat(a.rows[0]?.c)||0)) / 2 || null;
+      return { scored, conceded };
+    };
+    const hs = await stats(homeTeam);
+    const as_ = await stats(awayTeam);
+    if (!hs.scored || !as_.scored) return null;
+    const lg = 1.35; // European avg goals per team
+    const lH = Math.max(0.1, (hs.scored/lg) * (as_.conceded/lg) * lg * 1.1); // home advantage
+    const lA = Math.max(0.1, (as_.scored/lg) * (hs.conceded/lg) * lg);
+    let pH = 0, pD = 0, pA = 0;
+    for (let h = 0; h <= 7; h++) for (let a = 0; a <= 7; a++) {
+      const p = poissonVal(lH, h) * poissonVal(lA, a);
+      if (h > a) pH += p; else if (h === a) pD += p; else pA += p;
+    }
+    return { pHome: Math.round(pH * 100), pDraw: Math.round(pD * 100), pAway: Math.round(pA * 100) };
+  } catch (e) { return null; }
+}
+
+// [4] INJURY FACTOR — returns negative %-point adjustment per team
+async function getInjuryFactor(client, teamName) {
+  try {
+    const r = await client.query(`
+      SELECT COUNT(*) AS total, SUM(CASE WHEN is_key_player THEN 1 ELSE 0 END) AS key_out
+      FROM team_injuries
+      WHERE team_name=$1 AND status IN ('Doubtful','Out','Injured','Missing')
+        AND updated_at > NOW() - INTERVAL '4 days'
+    `, [teamName]);
+    if (!r.rows[0]) return 0;
+    const keyOut = parseInt(r.rows[0].key_out) || 0;
+    const total  = parseInt(r.rows[0].total) || 0;
+    return Math.max(-15, -(keyOut * 7) - (Math.max(0, total - keyOut) * 2));
+  } catch (e) { return 0; }
+}
+
+// [5] LINE MOVEMENT — compares current vs initial odds; returns {signal, boost}
+// Odds shortening toward predicted team = sharp money = +3%. Against = -3%.
+async function getLineMovement(client, fixtureId, sport, predictedIsHome) {
+  try {
+    const table = sport === 'basket' ? 'matches_basket' : 'matches';
+    const r = await client.query(
+      `SELECT odds_home, initial_odds_home FROM ${table} WHERE fixture_id=$1`, [fixtureId]
+    );
+    if (!r.rows[0]?.initial_odds_home || !r.rows[0]?.odds_home) return { signal: 'neutral', boost: 0 };
+    const cur = parseFloat(r.rows[0].odds_home);
+    const ini = parseFloat(r.rows[0].initial_odds_home);
+    const movePct = ((ini - cur) / ini) * 100; // negative = home odds shortened = home backed
+    if (predictedIsHome  && movePct < -5) return { signal: 'sharp',   boost: 3 };
+    if (!predictedIsHome && movePct > 5)  return { signal: 'sharp',   boost: 3 };
+    if (predictedIsHome  && movePct > 8)  return { signal: 'warning', boost: -3 };
+    if (!predictedIsHome && movePct < -8) return { signal: 'warning', boost: -3 };
+    return { signal: 'neutral', boost: 0 };
+  } catch (e) { return { signal: 'neutral', boost: 0 }; }
+}
+
+// [3+] League quality whitelist — returns tier 1/2/3 and badge
+const LEAGUE_TIERS = {
+  1: ['Premier League','La Liga','Serie A','Bundesliga','Ligue 1',
+      'UEFA Champions League','UEFA Europa League','UEFA Europa Conference League',
+      'NBA','Eredivisie','Primeira Liga','Scottish Premiership',
+      'Serie B','Championship'],
+  2: ['Super Lig','Jupiler Pro League','Russian Premier League','Brazilian Serie A',
+      'Argentine Primera División','MLS','Greek Super League',
+      'Czech First League','Polish Ekstraklasa'],
+};
+function getLeagueTier(leagueName) {
+  if (!leagueName) return 3;
+  const n = leagueName.toLowerCase();
+  if (LEAGUE_TIERS[1].some(l => n.includes(l.toLowerCase()))) return 1;
+  if (LEAGUE_TIERS[2].some(l => n.includes(l.toLowerCase()))) return 2;
+  return 3;
+}
+function leagueBadge(tier) {
+  return tier === 1 ? '🏆' : tier === 2 ? '🥈' : '⚠️';
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function logPrediction(client, sport, fixtureId, homeTeam, awayTeam, winner, prob, odds, dateMatch) {
   try {
     const kelly = calcKelly(prob, odds);
@@ -637,6 +774,7 @@ discordClient.on('messageCreate', async (message) => {
       // For each sport pick the best odds available for the predicted outcome
       const r = await pgClient.query(`
         SELECT sport, home_team, away_team, date, ai_forecast, ai_probability, ai_edge,
+               league_name,
                CASE
                  WHEN sport='basket' AND ai_forecast='Home Win' THEN odds_home
                  WHEN sport='basket' AND ai_forecast='Away Win' THEN odds_away
@@ -646,7 +784,8 @@ discordClient.on('messageCreate', async (message) => {
                END AS picked_odds
         FROM (
           SELECT 'football' AS sport, home_team, away_team, date,
-                 ai_forecast, ai_probability, ai_edge, odds_home, NULL::decimal AS odds_away
+                 ai_forecast, ai_probability, ai_edge, odds_home, NULL::decimal AS odds_away,
+                 league_name
           FROM matches
           WHERE date > NOW() AND date < NOW() + INTERVAL '5 days'
             AND ai_forecast IS NOT NULL AND ai_probability IS NOT NULL
@@ -655,7 +794,8 @@ discordClient.on('messageCreate', async (message) => {
           UNION ALL
 
           SELECT 'basket', home_team, away_team, date,
-                 ai_forecast, ai_probability, ai_edge, odds_home, odds_away
+                 ai_forecast, ai_probability, ai_edge, odds_home, odds_away,
+                 league_name
           FROM matches_basket
           WHERE date > NOW() AND date < NOW() + INTERVAL '5 days'
             AND ai_forecast IS NOT NULL AND ai_probability IS NOT NULL
@@ -664,7 +804,8 @@ discordClient.on('messageCreate', async (message) => {
           UNION ALL
 
           SELECT 'esport', home_team, away_team, date,
-                 ai_forecast, ai_probability, ai_edge, odds_home, odds_away
+                 ai_forecast, ai_probability, ai_edge, odds_home, odds_away,
+                 league_name
           FROM matches_esport
           WHERE date > NOW() AND date < NOW() + INTERVAL '5 days'
             AND ai_forecast IS NOT NULL AND ai_probability IS NOT NULL
@@ -672,39 +813,53 @@ discordClient.on('messageCreate', async (message) => {
         ) t
         WHERE ai_probability >= 54
         ORDER BY ai_probability DESC, date ASC
-        LIMIT 30
+        LIMIT 40
       `);
 
       if (r.rows.length === 0) {
         return message.reply('ℹ️ Brak wystarczająco pewnych typów na najbliższe 5 dni. Bot analizuje co 10 minut — spróbuj za chwilę.');
       }
 
-      const rows = r.rows;
+      // Filter: tier-3 leagues only if prob >= 65 (lower data quality = need higher confidence)
+      const filtered = r.rows.filter(row => {
+        const tier = getLeagueTier(row.league_name || row.sport);
+        return tier <= 2 || parseFloat(row.ai_probability) >= 65;
+      }).slice(0, 30);
+
+      if (filtered.length === 0) {
+        return message.reply('ℹ️ Brak wystarczająco pewnych typów na najbliższe 5 dni. Bot analizuje co 10 minut — spróbuj za chwilę.');
+      }
+
+      const rows = filtered;
       // Summary stats
       const avgProb = (rows.reduce((s, x) => s + parseFloat(x.ai_probability), 0) / rows.length).toFixed(1);
       const highConf = rows.filter(x => parseFloat(x.ai_probability) >= 65).length;
       const combined10 = rows.slice(0, 10).reduce((p, x) => p * (parseFloat(x.ai_probability) / 100), 1);
+      const tier1Count = rows.filter(x => getLeagueTier(x.league_name || x.sport) === 1).length;
 
       // Header
       let header = `🎯 **LONG TAPE — TOP ${rows.length} TYPÓW**\n`;
-      header += `_Posortowane wg pewności modelu | ${rows.length} meczów | kolejne 5 dni_\n\n`;
-      header += `📊 Śr. pewność: **${avgProb}%** | Pewnych (≥65%): **${highConf}** | Est. p(top10): **${(combined10 * 100).toFixed(1)}%**\n`;
-      header += `_Legenda: ✅ ≥65% pewności | 🔶 58-64% | 🔹 54-57%_\n`;
+      header += `_Posortowane wg pewności modelu | kolejne 5 dni_\n\n`;
+      header += `📊 Śr. pewność: **${avgProb}%** | ≥65%: **${highConf}** | 🏆 TOP liga: **${tier1Count}** | Est. p(top10): **${(combined10 * 100).toFixed(1)}%**\n`;
+      header += `_Legenda: ✅ ≥65% | 🔶 58-64% | 🔹 54-57% | 🏆 TOP liga | 🥈 średnia | ⚠️ niska_\n`;
 
-      // Build entry lines, split into chunks of ~10 for readability
+      // Build entry lines
       const entries = rows.map((row, i) => {
         const prob = parseFloat(row.ai_probability);
         const odds = row.picked_odds ? parseFloat(row.picked_odds) : null;
         const kelly = calcKelly(prob, odds);
         const flag = prob >= 65 ? '✅' : prob >= 58 ? '🔶' : '🔹';
         const icon = sportIcon[row.sport] || '🔮';
+        const tier = getLeagueTier(row.league_name || row.sport);
+        const lBadge = leagueBadge(tier);
         const winner = row.ai_forecast === 'Home Win' ? row.home_team
                      : row.ai_forecast === 'Away Win' ? row.away_team
                      : row.ai_forecast;
         const oddsStr = odds ? ` @ **${odds.toFixed(2)}**` : '';
         const kellyStr = kelly ? ` | Kelly: ${kelly}%` : '';
+        const leagueStr = row.league_name ? ` | ${lBadge} ${row.league_name}` : '';
         return `${flag} **${i + 1}.** ${icon} ${row.home_team} — ${row.away_team}\n` +
-               `> **${winner}** | **${prob}%**${oddsStr}${kellyStr} | 🗓 ${fmtTime(row.date)}`;
+               `> **${winner}** | **${prob}%**${oddsStr}${kellyStr} | 🗓 ${fmtTime(row.date)}${leagueStr}`;
       });
 
       // Send header first, then entries in batches
@@ -1256,6 +1411,41 @@ async function analyzeUpcomingMatches() {
           if (DISCORD_WEBHOOK_URL) await axios.post(DISCORD_WEBHOOK_URL, { content: msgDnb.trim() });
         }
         
+        // ── Post-processing: blend Poisson + form + injury + line movement ──
+        let finalProb = h2h ? parseFloat(h2h.model_probability) : null;
+        let finalForecast = h2h ? h2h.recommended_bet : null;
+        const predictedIsHome = finalForecast && finalForecast.toLowerCase().includes('home');
+
+        if (finalProb && finalForecast) {
+          // [3] Poisson blend — 60% AI + 40% Poisson if we have enough historical data
+          const poisson = await getPoissonProbs(client, match.home_team, match.away_team);
+          if (poisson) {
+            const poissonProb = predictedIsHome ? poisson.pHome : poisson.pAway;
+            finalProb = Math.round(0.60 * finalProb + 0.40 * poissonProb);
+          }
+
+          // [1] Recent form
+          const hForm = await getRecentFormFactor(client, 'football', match.home_team);
+          const aForm = await getRecentFormFactor(client, 'football', match.away_team);
+          const formAdj = predictedIsHome ? (hForm - aForm) * 0.4 : (aForm - hForm) * 0.4;
+          finalProb = Math.round(Math.max(50, Math.min(95, finalProb + formAdj)));
+
+          // [4] Injury adjustment for both teams
+          const homeInjury = await getInjuryFactor(client, match.home_team);
+          const awayInjury = await getInjuryFactor(client, match.away_team);
+          const injAdj = predictedIsHome ? homeInjury - awayInjury * 0.5
+                                         : awayInjury - homeInjury * 0.5;
+          finalProb = Math.round(Math.max(50, Math.min(95, finalProb + injAdj)));
+
+          // [5] Line movement
+          const lm = await getLineMovement(client, match.fixture_id, 'football', predictedIsHome);
+          finalProb = Math.round(Math.max(50, Math.min(95, finalProb + lm.boost)));
+
+          if (finalProb !== parseFloat(h2h.model_probability)) {
+            console.log(`Football ${match.home_team} vs ${match.away_team}: prob ${h2h.model_probability}% → ${finalProb}% (Poisson+form+injury+line)`);
+          }
+        }
+
         // Mark as sent so we don't query it again endlessly
         await client.query(`
           UPDATE matches 
@@ -1275,7 +1465,7 @@ async function analyzeUpcomingMatches() {
               ai_probability = $13
           WHERE fixture_id = $14
         `, [
-          h2h ? h2h.recommended_bet : null,
+          finalForecast,
           h2h ? h2h.edge_percent : null,
           btts ? btts.recommended_bet : null,
           btts ? btts.edge_percent : null,
@@ -1287,7 +1477,7 @@ async function analyzeUpcomingMatches() {
           dc ? dc.edge_percent : null,
           dnb ? dnb.recommended_bet : null,
           dnb ? dnb.edge_percent : null,
-          h2h ? h2h.model_probability : null,
+          finalProb,
           match.fixture_id
         ]);
         
@@ -1339,8 +1529,28 @@ async function analyzeUpcomingBasketMatches() {
         });
         
         const prediction = aiResponse.data.value_bet;
-        
-        // Brak Edge Threshold w trakcie Scaffoldingowania
+        let prob = parseFloat(prediction.model_probability);
+        let forecast = prediction.recommended_bet;
+        const predictedIsHome = forecast === match.home_team;
+
+        // [1] Recent form adjustment
+        const hForm = await getRecentFormFactor(client, 'basket', match.home_team);
+        const aForm = await getRecentFormFactor(client, 'basket', match.away_team);
+        const formAdj = predictedIsHome ? (hForm - aForm) * 0.4 : (aForm - hForm) * 0.4;
+        prob = Math.max(50, Math.min(95, prob + formAdj));
+
+        // [2] Back-to-back penalty — if predicted winner played yesterday, reduce confidence
+        const b2bPenalty = await getBackToBackPenalty(client, forecast);
+        prob = Math.max(50, prob + b2bPenalty);
+        const b2bFlag = b2bPenalty < 0 ? ' ⚠️B2B' : '';
+
+        // [5] Line movement signal
+        const lm = await getLineMovement(client, match.fixture_id, 'basket', predictedIsHome);
+        prob = Math.max(50, Math.min(95, prob + lm.boost));
+        const lmFlag = lm.signal === 'sharp' ? ' 📈Sharp' : lm.signal === 'warning' ? ' ⚠️LineShift' : '';
+
+        prob = Math.round(prob);
+
         await client.query(`
           UPDATE matches_basket 
           SET sent_to_discord = true, 
@@ -1348,17 +1558,14 @@ async function analyzeUpcomingBasketMatches() {
               ai_edge = $2,
               ai_probability = $3
           WHERE fixture_id = $4
-        `, [
-          prediction.recommended_bet,
-          prediction.edge_percent,
-          prediction.model_probability,
-          match.fixture_id
-        ]);
+        `, [forecast, prediction.edge_percent, prob, match.fixture_id]);
 
-        const winnerIsHome = prediction.recommended_bet === match.home_team;
-        const pickedOdds = winnerIsHome ? match.odds_home : match.odds_away;
+        const pickedOdds = predictedIsHome ? match.odds_home : match.odds_away;
+        if (b2bFlag || lmFlag) {
+          console.log(`NBA ${match.home_team} vs ${match.away_team}: adjusted prob ${prediction.model_probability}% → ${prob}%${b2bFlag}${lmFlag}`);
+        }
         await logPrediction(client, 'basket', match.fixture_id, match.home_team, match.away_team,
-          prediction.recommended_bet, prediction.model_probability, pickedOdds, match.date);
+          forecast, prob, pickedOdds, match.date);
 
       } catch (aiError) {
         console.error(`Error analyzing NBA match ${match.fixture_id}:`, aiError.message);
