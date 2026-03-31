@@ -759,7 +759,7 @@ async function fetchNBAPlayerProps() {
   try {
     // Get upcoming NBA fixture IDs we already have
     const matches = await client.query(`SELECT fixture_id, home_team, away_team, date FROM matches_basket WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' LIMIT 6`);
-    if (matches.rows.length === 0) { client.release(); return; }
+    if (matches.rows.length === 0) return;
 
     // Delete stale props (> 2 days old)
     await client.query(`DELETE FROM player_props_basket WHERE match_date < NOW() - INTERVAL '2 days'`);
@@ -835,7 +835,7 @@ async function fetchFootballPlayerProps() {
       AND odds_home IS NOT NULL AND status IN ('NS','TBD')
       ORDER BY date ASC LIMIT 5
     `);
-    if (matches.rows.length === 0) { client.release(); return; }
+    if (matches.rows.length === 0) return;
 
     await client.query(`DELETE FROM player_props_football WHERE match_date < NOW() - INTERVAL '2 days'`);
 
@@ -879,7 +879,7 @@ async function fetchFootballPlayerProps() {
       if (!byKey[sk]) byKey[sk] = [];
       byKey[sk].push(m);
     }
-    if (Object.keys(byKey).length === 0) { client.release(); return; }
+    if (Object.keys(byKey).length === 0) return;
 
     // Normalize team name for fuzzy matching
     const norm = s => (s || '').toLowerCase().replace(/\s*(fc|afc|sc|cf|bsc|fk|1\.|\.|\s+)\s*/gi, ' ').trim();
