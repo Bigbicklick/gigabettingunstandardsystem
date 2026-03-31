@@ -711,7 +711,7 @@ discordClient.on('messageCreate', async (message) => {
       // ── BASKETBALL O/U PROPS ──────────────────────────────────────────
       const baskR = await pgClient.query(`
         SELECT pp.player_name, pp.market, pp.line, pp.odds_over, pp.odds_under, pp.ai_pick, pp.ai_probability,
-               mb.home_team, mb.away_team, pp.match_date
+               pp.bookmaker_key, mb.home_team, mb.away_team, pp.match_date
         FROM player_props_basket pp
         JOIN matches_basket mb ON mb.fixture_id = pp.fixture_id
         WHERE pp.match_date > NOW() AND pp.match_date < NOW() + INTERVAL '36 hours'
@@ -745,14 +745,22 @@ discordClient.on('messageCreate', async (message) => {
           if (!grouped[key]) grouped[key] = { date: row.match_date, props: [] };
           grouped[key].props.push(row);
         }
-        let cr = '🏀 **PROPSY NBA — Statystyki zawodników**\n_Dane: The Odds API — sprawdź dostępność u bukmachera_\n\n';
+        // bookmaker display labels
+        const bmLabel = bm => {
+          if (!bm || bm === 'us') return '🇺🇸 US';
+          if (bm === 'betclic')   return '🟢 Betclic';
+          if (bm === 'eu')        return '🇪🇺 EU';
+          return `📚 ${bm}`;
+        };
+        let cr = '🏀 **PROPSY NBA — Statystyki zawodników**\n\n';
         for (const [matchKey, data] of Object.entries(grouped)) {
           let chunk = `**${matchKey}** — ${dayLabel(data.date)} ⏰ ${fmtTime(data.date)}\n`;
           for (const p of data.props.slice(0, 8)) {
             const mktLabel = markets[p.market] || p.market;
             const odds = p.ai_pick === 'Over' ? parseFloat(p.odds_over) : parseFloat(p.odds_under);
             const flag = parseFloat(p.ai_probability) >= 58 ? '✅' : '🔹';
-            chunk += `> ${flag} **${p.player_name}** — ${mktLabel} ${p.ai_pick} **${p.line}** @ ${odds.toFixed(2)} _(${p.ai_probability}%)_\n`;
+            const src = bmLabel(p.bookmaker_key);
+            chunk += `> ${flag} **${p.player_name}** — ${mktLabel} ${p.ai_pick} **${p.line}** @ ${odds.toFixed(2)} _(${p.ai_probability}%)_ [${src}]\n`;
           }
           chunk += '\n';
           if (cr.length + chunk.length > 1900) { payloads.push(cr); cr = chunk; } else cr += chunk;
@@ -839,6 +847,22 @@ discordClient.on('messageCreate', async (message) => {
         }
         payloads.push(coupMsg);
       }
+
+      // Disclaimer — explains why line may differ on Betclic
+      const hasUsLines = baskR.rows.some(r => !r.bookmaker_key || r.bookmaker_key === 'us');
+      const hasBetclic  = baskR.rows.some(r => r.bookmaker_key === 'betclic');
+      let disclaimer = '\n';
+      if (hasBetclic) {
+        disclaimer += '🟢 **Linie oznaczone [Betclic] pochodzą bezpośrednio z Betclic** — powinny być zgodne z ofertą.\n';
+      }
+      if (hasUsLines) {
+        disclaimer += '🇺🇸 **Linie [US] pochodzą od bukmacherów amerykańskich** (DraftKings/FanDuel).\n';
+        disclaimer += '⚠️ Betclic może oferować **inną linię** dla tego samego rynku (np. US: 4.5 → Betclic: 3.5).\n';
+        disclaimer += '_Zawsze sprawdź aktualną linię na Betclic przed obstawieniem._';
+      } else if (hasBetclic) {
+        disclaimer += '_Dane z Betclic — linie powinny być zgodne z ofertą._';
+      }
+      if (disclaimer.trim()) payloads.push(disclaimer);
 
       for (const p of payloads) await message.reply(p);
     } catch(e) {

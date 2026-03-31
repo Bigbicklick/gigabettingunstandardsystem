@@ -163,6 +163,8 @@ async function initDB() {
     `);
 
     await client.query(`ALTER TABLE matches_esport ADD COLUMN IF NOT EXISTS ai_probability DECIMAL DEFAULT NULL;`);
+    await client.query(`ALTER TABLE player_props_basket ADD COLUMN IF NOT EXISTS bookmaker_key VARCHAR(50) DEFAULT NULL;`);
+    await client.query(`ALTER TABLE player_props_football ADD COLUMN IF NOT EXISTS bookmaker_key VARCHAR(50) DEFAULT NULL;`);
     await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS closing_odds DECIMAL DEFAULT NULL;`);
     await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS clv DECIMAL DEFAULT NULL;`);
 
@@ -779,56 +781,96 @@ async function fetchNBAPlayerProps() {
   if (!ODDS_API_KEY) return;
   const client = await pool.connect();
   try {
-    // Get upcoming NBA fixture IDs we already have
     const matches = await client.query(`SELECT fixture_id, home_team, away_team, date FROM matches_basket WHERE date > NOW() AND date < NOW() + INTERVAL '48 hours' LIMIT 6`);
     if (matches.rows.length === 0) return;
 
-    // Delete stale props (> 2 days old)
     await client.query(`DELETE FROM player_props_basket WHERE match_date < NOW() - INTERVAL '2 days'`);
+
+    // Priority: betclic (exact Betclic PL lines) → eu region → us region (fallback)
+    // betclic key in The Odds API is 'betclic' (EU region)
+    const FETCH_STRATEGIES = [
+      { label: 'betclic', params: { bookmakers: 'betclic' } },
+      { label: 'eu',      params: { regions: 'eu' } },
+      { label: 'us',      params: { regions: 'us' } },
+    ];
+    const MARKETS = 'player_points,player_rebounds,player_assists';
 
     let saved = 0;
     for (const m of matches.rows) {
-      // Extract event ID from fixture_id (nba_<eventId>)
       const eventId = m.fixture_id.replace('nba_', '');
-      await sleep(1500); // throttle: stay within rate limit
+      await sleep(1500);
       try {
-        const res = await axios.get(`https://api.the-odds-api.com/v4/sports/basketball_nba/events/${eventId}/odds`, {
-          params: { apiKey: ODDS_API_KEY, regions: 'us', markets: 'player_points,player_rebounds,player_assists', oddsFormat: 'decimal' },
-          timeout: 15000
-        });
+        let bookmakers = [];
+        let usedSource = 'us';
 
-        const bm = res.data?.bookmakers?.[0];
-        if (!bm) continue;
+        // Try each source in priority order until we get data
+        for (const strategy of FETCH_STRATEGIES) {
+          const res = await axios.get(`https://api.the-odds-api.com/v4/sports/basketball_nba/events/${eventId}/odds`, {
+            params: { apiKey: ODDS_API_KEY, markets: MARKETS, oddsFormat: 'decimal', ...strategy.params },
+            timeout: 15000
+          });
+          if (res.data?.bookmakers?.length > 0) {
+            bookmakers = res.data.bookmakers;
+            usedSource = strategy.label;
+            break;
+          }
+          await sleep(600); // small pause between fallback attempts
+        }
 
-        for (const mkt of bm.markets || []) {
-          const marketKey = mkt.key; // player_points, player_rebounds, player_assists
-          // Group outcomes by player (Over/Under pairs)
-          const playerMap = {};
-          for (const o of mkt.outcomes || []) {
-            const pName = o.description || o.name;
-            if (!playerMap[pName]) playerMap[pName] = {};
-            if (o.name === 'Over') { playerMap[pName].over = o.price; playerMap[pName].line = o.point; }
-            if (o.name === 'Under') { playerMap[pName].under = o.price; }
+        if (bookmakers.length === 0) continue;
+
+        // Aggregate lines across all returned bookmakers using consensus (most common line)
+        // For each player+market: collect all (line, over, under) pairs and pick the most common line
+        const aggregated = {}; // key: `${market}::${player}` → array of {line, over, under, bm}
+        for (const bm of bookmakers) {
+          for (const mkt of bm.markets || []) {
+            const marketKey = mkt.key;
+            const playerMap = {};
+            for (const o of mkt.outcomes || []) {
+              const pName = o.description || o.name;
+              if (!playerMap[pName]) playerMap[pName] = {};
+              if (o.name === 'Over')  { playerMap[pName].over = o.price; playerMap[pName].line = o.point; }
+              if (o.name === 'Under') { playerMap[pName].under = o.price; }
+            }
+            for (const [player, data] of Object.entries(playerMap)) {
+              if (!data.over || !data.under || !data.line) continue;
+              const k = `${marketKey}::${player}`;
+              if (!aggregated[k]) aggregated[k] = { marketKey, player, entries: [] };
+              aggregated[k].entries.push({ line: data.line, over: data.over, under: data.under, bm: bm.key });
+            }
+          }
+        }
+
+        for (const { marketKey, player, entries } of Object.values(aggregated)) {
+          // Prefer Betclic entry if available, otherwise use consensus (most common line)
+          let chosen = entries.find(e => e.bm === 'betclic');
+          if (!chosen) {
+            // Pick most common line value
+            const lineCounts = {};
+            for (const e of entries) lineCounts[e.line] = (lineCounts[e.line] || 0) + 1;
+            const mostCommonLine = parseFloat(Object.entries(lineCounts).sort((a,b)=>b[1]-a[1])[0][0]);
+            // Average odds for the most common line
+            const matching = entries.filter(e => e.line === mostCommonLine);
+            const avgOver  = matching.reduce((s,e) => s + e.over,  0) / matching.length;
+            const avgUnder = matching.reduce((s,e) => s + e.under, 0) / matching.length;
+            chosen = { line: mostCommonLine, over: avgOver, under: avgUnder, bm: usedSource };
           }
 
-          for (const [player, data] of Object.entries(playerMap)) {
-            if (!data.over || !data.under || !data.line) continue;
-            // Simple AI pick: slight favor to Over (NBA offense-driven meta)
-            const impliedOver = 1 / data.over;
-            const impliedUnder = 1 / data.under;
-            const fairOver = impliedOver / (impliedOver + impliedUnder);
-            const pick = fairOver >= 0.5 ? 'Over' : 'Under';
-            const prob = Math.round((fairOver >= 0.5 ? fairOver : 1 - fairOver) * 100);
+          const impliedOver  = 1 / chosen.over;
+          const impliedUnder = 1 / chosen.under;
+          const fairOver = impliedOver / (impliedOver + impliedUnder);
+          const pick = fairOver >= 0.5 ? 'Over' : 'Under';
+          const prob = Math.round((fairOver >= 0.5 ? fairOver : 1 - fairOver) * 100);
 
-            await client.query(`
-              INSERT INTO player_props_basket (fixture_id, player_name, market, line, odds_over, odds_under, ai_pick, ai_probability, match_date)
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-              ON CONFLICT (fixture_id, player_name, market) DO UPDATE SET
-                line=EXCLUDED.line, odds_over=EXCLUDED.odds_over, odds_under=EXCLUDED.odds_under,
-                ai_pick=EXCLUDED.ai_pick, ai_probability=EXCLUDED.ai_probability, fetched_at=NOW()
-            `, [m.fixture_id, player, marketKey, data.line, data.over, data.under, pick, prob, m.date]);
-            saved++;
-          }
+          await client.query(`
+            INSERT INTO player_props_basket (fixture_id, player_name, market, line, odds_over, odds_under, ai_pick, ai_probability, match_date, bookmaker_key)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            ON CONFLICT (fixture_id, player_name, market) DO UPDATE SET
+              line=EXCLUDED.line, odds_over=EXCLUDED.odds_over, odds_under=EXCLUDED.odds_under,
+              ai_pick=EXCLUDED.ai_pick, ai_probability=EXCLUDED.ai_probability,
+              bookmaker_key=EXCLUDED.bookmaker_key, fetched_at=NOW()
+          `, [m.fixture_id, player, marketKey, chosen.line, chosen.over, chosen.under, pick, prob, m.date, chosen.bm]);
+          saved++;
         }
       } catch (e) {
         if (e.response?.status === 401) { await handleOdds401('player_props'); break; }
