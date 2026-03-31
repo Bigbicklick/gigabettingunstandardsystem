@@ -1251,9 +1251,6 @@ async function sendMatchStartAlerts() {
         UNION ALL
         SELECT 'basket', home_team, away_team, date, ai_forecast, ai_probability, odds_home, odds_away
         FROM matches_basket WHERE date BETWEEN NOW() + INTERVAL '25 minutes' AND NOW() + INTERVAL '35 minutes' AND ai_forecast IS NOT NULL
-        UNION ALL
-        SELECT 'esport', home_team, away_team, date, ai_forecast, ai_probability, odds_home, odds_away
-        FROM matches_esport WHERE date BETWEEN NOW() + INTERVAL '25 minutes' AND NOW() + INTERVAL '35 minutes' AND ai_forecast IS NOT NULL
       ) t
     `);
 
