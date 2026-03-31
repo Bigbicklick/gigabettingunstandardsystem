@@ -55,6 +55,8 @@ const pool = new Pool({
   connectionString: DB_URL,
 });
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function initDB() {
   const client = await pool.connect();
   try {
@@ -766,6 +768,7 @@ async function fetchNBAPlayerProps() {
     for (const m of matches.rows) {
       // Extract event ID from fixture_id (nba_<eventId>)
       const eventId = m.fixture_id.replace('nba_', '');
+      await sleep(1500); // throttle: stay within rate limit
       try {
         const res = await axios.get(`https://api.the-odds-api.com/v4/sports/basketball_nba/events/${eventId}/odds`, {
           params: { apiKey: ODDS_API_KEY, regions: 'us', markets: 'player_points,player_rebounds,player_assists', oddsFormat: 'decimal' },
@@ -807,7 +810,8 @@ async function fetchNBAPlayerProps() {
         }
       } catch (e) {
         if (e.response?.status === 401) { await handleOdds401('player_props'); break; }
-        if (e.response?.status === 422) continue; // event not found in odds API
+        if (e.response?.status === 422) continue;
+        if (e.response?.status === 429) { console.warn('NBA player props: rate limited, skipping remaining.'); break; }
         console.error(`Player props fetch error for ${m.home_team} vs ${m.away_team}: ${e.message}`);
       }
     }
@@ -883,6 +887,7 @@ async function fetchFootballPlayerProps() {
     let saved = 0;
     for (const [sportKey, sportMatches] of Object.entries(byKey)) {
       // 1 call: get Odds API event list for this sport key
+      await sleep(2000); // throttle before each sport key events call
       let oddsEvents = [];
       try {
         const evRes = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/events`, {
@@ -912,6 +917,7 @@ async function fetchFootballPlayerProps() {
         if (!found) continue;
 
         // 1 call: fetch player goalscorer + card props
+        await sleep(2000); // throttle between per-event calls
         try {
           const propsRes = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/events/${found.id}/odds`, {
             params: {
