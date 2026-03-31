@@ -625,6 +625,106 @@ discordClient.on('messageCreate', async (message) => {
         return message.reply("Wystąpił błąd DB dla Esportu.");
      } finally { pgClient.release(); }
 
+  } else if (message.content === 'long') {
+    const pgClient = await pool.connect();
+    try {
+      const fmtTime = dt => new Date(dt).toLocaleString('pl-PL', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw'
+      });
+      const sportIcon = { football: '⚽', basket: '🏀', esport: '🎮', tennis: '🎾' };
+
+      // Pull top 30 picks across all sports — next 5 days, probability descending
+      // For each sport pick the best odds available for the predicted outcome
+      const r = await pgClient.query(`
+        SELECT sport, home_team, away_team, date, ai_forecast, ai_probability, ai_edge,
+               CASE
+                 WHEN sport='basket' AND ai_forecast='Home Win' THEN odds_home
+                 WHEN sport='basket' AND ai_forecast='Away Win' THEN odds_away
+                 WHEN sport='esport' AND ai_forecast='Home Win' THEN odds_home
+                 WHEN sport='esport' AND ai_forecast='Away Win' THEN odds_away
+                 ELSE odds_home
+               END AS picked_odds
+        FROM (
+          SELECT 'football' AS sport, home_team, away_team, date,
+                 ai_forecast, ai_probability, ai_edge, odds_home, NULL::decimal AS odds_away
+          FROM matches
+          WHERE date > NOW() AND date < NOW() + INTERVAL '5 days'
+            AND ai_forecast IS NOT NULL AND ai_probability IS NOT NULL
+            AND status IN ('NS','TBD') AND odds_home IS NOT NULL
+
+          UNION ALL
+
+          SELECT 'basket', home_team, away_team, date,
+                 ai_forecast, ai_probability, ai_edge, odds_home, odds_away
+          FROM matches_basket
+          WHERE date > NOW() AND date < NOW() + INTERVAL '5 days'
+            AND ai_forecast IS NOT NULL AND ai_probability IS NOT NULL
+            AND status IN ('NS','TBD') AND odds_home IS NOT NULL
+
+          UNION ALL
+
+          SELECT 'esport', home_team, away_team, date,
+                 ai_forecast, ai_probability, ai_edge, odds_home, odds_away
+          FROM matches_esport
+          WHERE date > NOW() AND date < NOW() + INTERVAL '5 days'
+            AND ai_forecast IS NOT NULL AND ai_probability IS NOT NULL
+            AND status IN ('NS','TBD') AND odds_home IS NOT NULL
+        ) t
+        WHERE ai_probability >= 54
+        ORDER BY ai_probability DESC, date ASC
+        LIMIT 30
+      `);
+
+      if (r.rows.length === 0) {
+        return message.reply('ℹ️ Brak wystarczająco pewnych typów na najbliższe 5 dni. Bot analizuje co 10 minut — spróbuj za chwilę.');
+      }
+
+      const rows = r.rows;
+      // Summary stats
+      const avgProb = (rows.reduce((s, x) => s + parseFloat(x.ai_probability), 0) / rows.length).toFixed(1);
+      const highConf = rows.filter(x => parseFloat(x.ai_probability) >= 65).length;
+      const combined10 = rows.slice(0, 10).reduce((p, x) => p * (parseFloat(x.ai_probability) / 100), 1);
+
+      // Header
+      let header = `🎯 **LONG TAPE — TOP ${rows.length} TYPÓW**\n`;
+      header += `_Posortowane wg pewności modelu | ${rows.length} meczów | kolejne 5 dni_\n\n`;
+      header += `📊 Śr. pewność: **${avgProb}%** | Pewnych (≥65%): **${highConf}** | Est. p(top10): **${(combined10 * 100).toFixed(1)}%**\n`;
+      header += `_Legenda: ✅ ≥65% pewności | 🔶 58-64% | 🔹 54-57%_\n`;
+
+      // Build entry lines, split into chunks of ~10 for readability
+      const entries = rows.map((row, i) => {
+        const prob = parseFloat(row.ai_probability);
+        const odds = row.picked_odds ? parseFloat(row.picked_odds) : null;
+        const kelly = calcKelly(prob, odds);
+        const flag = prob >= 65 ? '✅' : prob >= 58 ? '🔶' : '🔹';
+        const icon = sportIcon[row.sport] || '🔮';
+        const winner = row.ai_forecast === 'Home Win' ? row.home_team
+                     : row.ai_forecast === 'Away Win' ? row.away_team
+                     : row.ai_forecast;
+        const oddsStr = odds ? ` @ **${odds.toFixed(2)}**` : '';
+        const kellyStr = kelly ? ` | Kelly: ${kelly}%` : '';
+        return `${flag} **${i + 1}.** ${icon} ${row.home_team} — ${row.away_team}\n` +
+               `> **${winner}** | **${prob}%**${oddsStr}${kellyStr} | 🗓 ${fmtTime(row.date)}`;
+      });
+
+      // Send header first, then entries in batches
+      await message.reply(header);
+      let chunk = '';
+      for (const entry of entries) {
+        const line = entry + '\n\n';
+        if (chunk.length + line.length > 1900) {
+          await message.reply(chunk.trim());
+          chunk = '';
+        }
+        chunk += line;
+      }
+      if (chunk.trim()) await message.reply(chunk.trim());
+
+    } catch(e) {
+      console.error(e);
+      return message.reply('Błąd pobierania długiej taśmy.');
+    } finally { pgClient.release(); }
+
   } else if (message.content === 'statsai') {
     const pgClient = await pool.connect();
     try {
