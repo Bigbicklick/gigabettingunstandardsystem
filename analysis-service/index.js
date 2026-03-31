@@ -19,6 +19,65 @@ function calcKelly(prob, odds) {
   return Math.round(Math.min(f * 100, 20) * 10) / 10; // cap 20%, 1 decimal
 }
 
+// ─── ELO RATING SYSTEM ──────────────────────────────────────────────────────
+// Research basis: ELO most consistently recommended across all sports prediction literature
+// K-factors: higher = faster adaptation (esports shorter seasons, more variance)
+const ELO_K = { esport: 32, basket: 24, football: 20, tennis: 24 };
+const ELO_DEFAULT = 1500;
+
+function eloWinProb(eloA, eloB) {
+  return 1 / (1 + Math.pow(10, (eloB - eloA) / 400));
+}
+
+async function getElo(client, sport, team) {
+  const r = await client.query(
+    `SELECT elo_rating FROM team_elo WHERE sport=$1 AND team_name=$2`, [sport, team]
+  );
+  if (r.rows.length > 0) return parseFloat(r.rows[0].elo_rating);
+
+  // Bootstrap from historical win rate (esport) — teams with 60% WR start at ~1560, 40% at ~1440
+  let bootstrap = ELO_DEFAULT;
+  if (sport === 'esport') {
+    const sr = await client.query(
+      `SELECT win_rate FROM team_stats_esport WHERE LOWER(team_name)=LOWER($1) AND matches_played >= 3 LIMIT 1`,
+      [team]
+    );
+    if (sr.rows.length > 0) {
+      bootstrap = Math.round(ELO_DEFAULT + (parseFloat(sr.rows[0].win_rate) - 50) * 12);
+    }
+  }
+  await client.query(
+    `INSERT INTO team_elo (sport, team_name, elo_rating, matches_played)
+     VALUES ($1,$2,$3,0) ON CONFLICT (sport, team_name) DO NOTHING`,
+    [sport, team, bootstrap]
+  );
+  return bootstrap;
+}
+
+async function updateElo(client, sport, homeTeam, awayTeam, homeWon) {
+  const K = ELO_K[sport] || 24;
+  const eH = await getElo(client, sport, homeTeam);
+  const eA = await getElo(client, sport, awayTeam);
+  const expH = eloWinProb(eH, eA);
+  const newH = Math.round((eH + K * ((homeWon ? 1 : 0) - expH)) * 10) / 10;
+  const newA = Math.round((eA + K * ((homeWon ? 0 : 1) - (1 - expH))) * 10) / 10;
+  await client.query(
+    `INSERT INTO team_elo (sport, team_name, elo_rating, matches_played, updated_at)
+     VALUES ($1,$2,$3,1,NOW())
+     ON CONFLICT (sport, team_name) DO UPDATE SET
+       elo_rating=$3, matches_played=team_elo.matches_played+1, updated_at=NOW()`,
+    [sport, homeTeam, newH]
+  );
+  await client.query(
+    `INSERT INTO team_elo (sport, team_name, elo_rating, matches_played, updated_at)
+     VALUES ($1,$2,$3,1,NOW())
+     ON CONFLICT (sport, team_name) DO UPDATE SET
+       elo_rating=$3, matches_played=team_elo.matches_played+1, updated_at=NOW()`,
+    [sport, awayTeam, newA]
+  );
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 async function logPrediction(client, sport, fixtureId, homeTeam, awayTeam, winner, prob, odds, dateMatch) {
   try {
     const kelly = calcKelly(prob, odds);
@@ -576,7 +635,8 @@ discordClient.on('messageCreate', async (message) => {
           COUNT(*) FILTER (WHERE is_correct = true) AS correct,
           ROUND(AVG(predicted_prob),1) AS avg_prob,
           ROUND(AVG(kelly_stake),1) AS avg_kelly,
-          ROUND(AVG(clv) FILTER (WHERE clv IS NOT NULL),2) AS avg_clv
+          ROUND(AVG(clv) FILTER (WHERE clv IS NOT NULL),2) AS avg_clv,
+          ROUND(AVG(brier_score) FILTER (WHERE brier_score IS NOT NULL),4) AS avg_brier
         FROM predictions_history
         GROUP BY sport ORDER BY sport
       `);
@@ -588,15 +648,54 @@ discordClient.on('messageCreate', async (message) => {
         const hitRate = row.resolved > 0 ? `${Math.round(row.correct / row.resolved * 100)}% (${row.correct}/${row.resolved})` : 'brak danych';
         msg += `${sportIcon} **${row.sport.toUpperCase()}**\n`;
         const clvStr = row.avg_clv !== null ? ` | CLV: **${row.avg_clv > 0 ? '+' : ''}${row.avg_clv}%**` : '';
+        // Brier score: 0.00 = perfect, 0.25 = random, lower is better
+        let brierStr = '';
+        if (row.avg_brier !== null) {
+          const b = parseFloat(row.avg_brier);
+          const qual = b < 0.15 ? '🟢 Doskonała' : b < 0.20 ? '🟡 Dobra' : b < 0.25 ? '🟠 Przeciętna' : '🔴 Słaba';
+          brierStr = ` | Brier: **${b}** (${qual})`;
+        }
         msg += `> 📈 Prognoz: **${row.total}** | Zweryfikowanych: **${row.resolved}**\n`;
         msg += `> ✅ Trafność: **${hitRate}**${clvStr}\n`;
-        msg += `> 🎯 Śr. pewność modelu: **${row.avg_prob}%** | Śr. Kelly: **${row.avg_kelly}%**\n\n`;
+        msg += `> 🎯 Śr. pewność: **${row.avg_prob}%** | Kelly: **${row.avg_kelly}%**${brierStr}\n\n`;
       }
-      msg += '_Wyniki są aktualizowane automatycznie po zakończeniu meczów._';
+      msg += '_Brier score: im niższy tym lepsza kalibracja modelu (0.00 = ideał, 0.25 = losowy)._\n';
+      msg += '_Wyniki aktualizowane automatycznie po zakończeniu meczów._';
       await message.reply(msg);
     } catch(e) {
       console.error(e);
       return message.reply('Błąd pobierania statystyk.');
+    } finally { pgClient.release(); }
+
+  } else if (message.content.startsWith('elo')) {
+    const parts = message.content.split(' ');
+    const sportFilter = parts[1] ? parts[1].toLowerCase() : null; // e.g. "elo esport"
+    const pgClient = await pool.connect();
+    try {
+      const sports = sportFilter ? [sportFilter] : ['esport', 'basket', 'football'];
+      let msg = '📊 **RANKINGI ELO — SIŁA DRUŻYN**\n_Wyższy wynik = silniejszy zespół (bazowy: 1500)_\n\n';
+      for (const sp of sports) {
+        const icon = { esport: '🎮', basket: '🏀', football: '⚽', tennis: '🎾' }[sp] || '🔮';
+        const r = await pgClient.query(`
+          SELECT team_name, elo_rating, matches_played
+          FROM team_elo WHERE sport=$1 AND matches_played > 0
+          ORDER BY elo_rating DESC LIMIT 10
+        `, [sp]);
+        if (r.rows.length === 0) continue;
+        msg += `${icon} **${sp.toUpperCase()}**\n`;
+        r.rows.forEach((row, i) => {
+          const medal = ['🥇','🥈','🥉'][i] || `${i+1}.`;
+          const diff = parseFloat(row.elo_rating) - 1500;
+          const diffStr = diff >= 0 ? `+${diff.toFixed(0)}` : diff.toFixed(0);
+          msg += `> ${medal} **${row.team_name}** — ${parseFloat(row.elo_rating).toFixed(0)} (${diffStr}) | ${row.matches_played} meczów\n`;
+        });
+        msg += '\n';
+      }
+      if (msg.length < 100) return message.reply('ℹ️ Brak danych ELO. Rankingi budują się automatycznie po rozegraniu meczów.');
+      await message.reply(msg);
+    } catch(e) {
+      console.error(e);
+      return message.reply('Błąd pobierania rankingu ELO.');
     } finally { pgClient.release(); }
 
   } else if (message.content.startsWith('propsy')) {
@@ -1192,27 +1291,41 @@ async function analyzeUpcomingEsportsMatches() {
         const hForm = await getEsportTeamWinRate(client, match.home_team);
         const aForm = await getEsportTeamWinRate(client, match.away_team);
 
+        // ELO-based probability (bootstrapped from win_rate if no history)
+        const eloH = await getElo(client, 'esport', match.home_team);
+        const eloA = await getElo(client, 'esport', match.away_team);
+        const eloProb = eloWinProb(eloH, eloA); // P(home wins) per ELO
+
         const oH = match.odds_home ? parseFloat(match.odds_home) : null;
         const oA = match.odds_away ? parseFloat(match.odds_away) : null;
 
         let forecast, prob, edge;
         if (oH && oA && oH > 1 && oA > 1) {
-          const fH = (1 / oH) / (1 / oH + 1 / oA);
-          const fA = 1 - fH;
-          const adj = ((hForm - aForm) / 100) * 0.15;
-          const mH = Math.max(0.05, Math.min(0.95, fH + adj));
-          const mA = 1 - mH;
-          if (mH >= mA) {
-            forecast = 'Home Win'; prob = Math.round(mH * 100); edge = parseFloat(((mH - fH) * 100).toFixed(2));
+          // Vig-removed bookmaker fair probability
+          const vigSum = 1 / oH + 1 / oA;
+          const fH = (1 / oH) / vigSum;
+
+          // 3-factor ensemble: 40% ELO + 35% bookmaker fair prob + 25% historical win rate
+          // Research: ELO most predictive, odds contain market wisdom, win rate = long-run form
+          const wrH = hForm / (hForm + aForm);
+          const blendH = Math.max(0.05, Math.min(0.95,
+            0.40 * eloProb + 0.35 * fH + 0.25 * wrH
+          ));
+          const blendA = 1 - blendH;
+          edge = parseFloat(((blendH - fH) * 100).toFixed(2));
+          if (blendH >= blendA) {
+            forecast = 'Home Win'; prob = Math.round(blendH * 100);
           } else {
-            forecast = 'Away Win'; prob = Math.round(mA * 100); edge = parseFloat(((mA - fA) * 100).toFixed(2));
+            forecast = 'Away Win'; prob = Math.round(blendA * 100); edge = parseFloat(((blendA - (1 - fH)) * 100).toFixed(2));
           }
         } else {
-          const total = hForm + aForm || 100;
-          if (hForm >= aForm) {
-            forecast = 'Home Win'; prob = Math.round((hForm / total) * 100); edge = -5.0;
+          // No odds: use ELO + win rate blend only
+          const wrH = hForm / (hForm + aForm || 100);
+          const blendH = Math.max(0.05, Math.min(0.95, 0.60 * eloProb + 0.40 * wrH));
+          if (blendH >= 0.5) {
+            forecast = 'Home Win'; prob = Math.round(blendH * 100); edge = -3.0;
           } else {
-            forecast = 'Away Win'; prob = Math.round((aForm / total) * 100); edge = -5.0;
+            forecast = 'Away Win'; prob = Math.round((1 - blendH) * 100); edge = -3.0;
           }
         }
 
@@ -1233,6 +1346,56 @@ async function analyzeUpcomingEsportsMatches() {
   } catch (e) {
     console.error('Error in analyzeUpcomingEsportsMatches:', e.message);
   } finally { client.release(); }
+}
+
+async function resolvePredictions() {
+  const client = await pool.connect();
+  try {
+    const sources = [
+      { table: 'matches',        sport: 'football', statuses: ['FT','AET','PEN'] },
+      { table: 'matches_basket', sport: 'basket',   statuses: ['FT','POST','finished'] },
+      { table: 'matches_esport', sport: 'esport',   statuses: ['FT','finished'] },
+    ];
+
+    let resolved = 0;
+    for (const { table, sport, statuses } of sources) {
+      const rows = await client.query(`
+        SELECT m.fixture_id, m.home_team, m.away_team, m.home_score, m.away_score,
+               ph.id AS ph_id, ph.predicted_winner, ph.predicted_prob
+        FROM ${table} m
+        JOIN predictions_history ph ON ph.fixture_id = m.fixture_id AND ph.sport = $1
+        WHERE m.status = ANY($2)
+          AND m.home_score IS NOT NULL
+          AND m.away_score IS NOT NULL
+          AND ph.resolved = false
+      `, [sport, statuses]);
+
+      for (const row of rows.rows) {
+        const homeWon = parseInt(row.home_score) > parseInt(row.away_score);
+        const predictedHome = row.predicted_winner === row.home_team;
+        const isCorrect = (homeWon && predictedHome) || (!homeWon && !predictedHome);
+
+        // Brier score: (predicted_prob/100 - actual_outcome)^2  — lower is better
+        const prob = parseFloat(row.predicted_prob) / 100;
+        const outcome = isCorrect ? 1 : 0;
+        const brierScore = parseFloat(Math.pow(prob - outcome, 2).toFixed(4));
+
+        await client.query(`
+          UPDATE predictions_history
+          SET resolved = true, is_correct = $1, brier_score = $2
+          WHERE id = $3
+        `, [isCorrect, brierScore, row.ph_id]);
+
+        await updateElo(client, sport, row.home_team, row.away_team, homeWon);
+        resolved++;
+      }
+    }
+    if (resolved > 0) console.log(`resolvePredictions: resolved ${resolved} predictions, ELO updated.`);
+  } catch (e) {
+    console.error('resolvePredictions error:', e.message);
+  } finally {
+    client.release();
+  }
 }
 
 async function sendMatchStartAlerts() {
@@ -1457,7 +1620,10 @@ function start() {
   // Resolve virtual bets + CLV — every 30 minutes
   cron.schedule('*/30 * * * *', () => { resolveVirtualBets(); });
 
-  console.log('Analysis service: 10min analysis, 5min match alerts, 30min bet resolution, 20:00 daily coupon.');
+  // Resolve predictions (Brier score + ELO update) — every 30 minutes
+  cron.schedule('*/30 * * * *', () => { resolvePredictions(); });
+
+  console.log('Analysis service: 10min analysis, 5min match alerts, 30min bet+prediction resolution, 20:00 daily coupon.');
 }
 
 start();

@@ -166,6 +166,28 @@ async function initDB() {
     await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS closing_odds DECIMAL DEFAULT NULL;`);
     await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS clv DECIMAL DEFAULT NULL;`);
 
+    // Score columns for prediction resolution
+    await client.query(`ALTER TABLE matches        ADD COLUMN IF NOT EXISTS home_score INT DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches        ADD COLUMN IF NOT EXISTS away_score INT DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches_basket ADD COLUMN IF NOT EXISTS home_score INT DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches_basket ADD COLUMN IF NOT EXISTS away_score INT DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches_esport ADD COLUMN IF NOT EXISTS home_score INT DEFAULT NULL;`);
+    await client.query(`ALTER TABLE matches_esport ADD COLUMN IF NOT EXISTS away_score INT DEFAULT NULL;`);
+    await client.query(`ALTER TABLE predictions_history ADD COLUMN IF NOT EXISTS brier_score DECIMAL DEFAULT NULL;`);
+
+    // ELO ratings table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS team_elo (
+        id SERIAL PRIMARY KEY,
+        sport VARCHAR(20) NOT NULL,
+        team_name VARCHAR(200) NOT NULL,
+        elo_rating DECIMAL DEFAULT 1500,
+        matches_played INT DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(sport, team_name)
+      );
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS predictions_history (
         id SERIAL PRIMARY KEY,
@@ -962,6 +984,74 @@ async function fetchFootballPlayerProps() {
   }
 }
 
+async function fetchRecentFootballResults() {
+  const API_KEY = process.env.API_FOOTBALL_KEY;
+  if (!API_KEY) return;
+  const client = await pool.connect();
+  try {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yStr = yesterday.toISOString().split('T')[0];
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const res = await axios.get('https://v3.football.api-sports.io/fixtures', {
+      params: { status: 'FT-AET-PEN', from: yStr, to: todayStr },
+      headers: { 'x-apisports-key': API_KEY },
+      timeout: 15000
+    });
+
+    if (!res.data?.response?.length) return;
+    let updated = 0;
+    for (const m of res.data.response) {
+      if (m.goals.home === null || m.goals.away === null) continue;
+      const r = await client.query(
+        `UPDATE matches SET status='FT', home_score=$1, away_score=$2 WHERE fixture_id=$3 AND home_score IS NULL`,
+        [m.goals.home, m.goals.away, `fb_${m.fixture.id}`]
+      );
+      if (r.rowCount > 0) updated++;
+    }
+    if (updated > 0) console.log(`Football results: stored scores for ${updated} finished matches.`);
+  } catch (e) {
+    console.error('fetchRecentFootballResults error:', e.message);
+  } finally {
+    client.release();
+  }
+}
+
+async function fetchRecentEsportResults() {
+  const PANDA_KEY = process.env.PANDASCORE_API_KEY;
+  if (!PANDA_KEY) return;
+  const client = await pool.connect();
+  try {
+    const res = await axios.get('https://api.pandascore.co/matches/past', {
+      params: { per_page: 50, page: 1, sort: '-end_at' },
+      headers: { Authorization: `Bearer ${PANDA_KEY}` },
+      timeout: 15000
+    });
+
+    if (!res.data?.length) return;
+    let updated = 0;
+    for (const m of res.data) {
+      if (!m.winner) continue;
+      const fid = `ps_${m.id}`;
+      const homeTeamId = m.opponents?.[0]?.opponent?.id;
+      const homeWon = m.winner.id === homeTeamId;
+      // Store binary: home_score=1/0, away_score=0/1
+      const r = await client.query(
+        `UPDATE matches_esport SET status='FT', home_score=$1, away_score=$2
+         WHERE fixture_id=$3 AND home_score IS NULL`,
+        [homeWon ? 1 : 0, homeWon ? 0 : 1, fid]
+      );
+      if (r.rowCount > 0) updated++;
+    }
+    if (updated > 0) console.log(`Esport results: stored outcomes for ${updated} finished matches.`);
+  } catch (e) {
+    console.error('fetchRecentEsportResults error:', e.message);
+  } finally {
+    client.release();
+  }
+}
+
 async function runFetchCycle() {
   await loadActiveOddsKeyFromDB(); // pick up any new key sent via Discord
   await fetchUpcomingMatches();
@@ -971,6 +1061,9 @@ async function runFetchCycle() {
   await fetchEsportHistoricalStats();
   await fetchNBAPlayerProps();
   await fetchFootballPlayerProps();
+  // Results fetch runs separately to avoid mixing upcoming/finished API calls
+  await fetchRecentFootballResults();
+  await fetchRecentEsportResults();
 }
 
 async function start() {
